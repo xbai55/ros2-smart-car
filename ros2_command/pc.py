@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QGridLayout,
 from PyQt6.QtCore import Qt, QSize
 
 # --- 配置区 ---
-JETSON_IP = '192.168.1.11' 
+JETSON_IP = '192.168.1.11'  
 PORT = 9999
 
 class RobotControlPanel(QWidget):

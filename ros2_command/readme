@@ -1,0 +1,10 @@
+ssh jetson@192.168.1.11
+小车端命令：
+#底层驱动
+
+ros2 run yahboomcar_bringup Mcnamu_driver_X3
+
+cd trycommand
+
+python3 car.py
+PC端命令：
