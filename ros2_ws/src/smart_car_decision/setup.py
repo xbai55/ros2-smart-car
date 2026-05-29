@@ -12,6 +12,7 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/config", glob("config/*.yaml")),
         ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
+        ("share/" + package_name + "/models", glob("models/*.pt")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -25,6 +26,7 @@ setup(
             "decision_controller = smart_car_decision.decision_controller:main",
             "laser_obstacle_monitor = smart_car_decision.laser_obstacle_monitor:main",
             "tcp_command_bridge = smart_car_decision.tcp_command_bridge:main",
+            "yolo11_camera_node = smart_car_decision.yolo11_camera_node:main",
         ],
     },
 )

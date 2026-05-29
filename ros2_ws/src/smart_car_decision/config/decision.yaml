@@ -31,3 +31,21 @@ tcp_command_bridge:
     host: 0.0.0.0
     port: 9999
     manual_cmd_topic: /manual_cmd
+
+yolo11_camera_node:
+  ros__parameters:
+    camera_source: "0"
+    camera_width: 640
+    camera_height: 480
+    camera_fps: 30.0
+    model_path: yolo11s.pt
+    device: "0"
+    imgsz: 640
+    confidence: 0.35
+    inference_rate_hz: 10.0
+    detection_topic: /vision/detection
+    default_command: no_light
+    publish_every_sec: 0.1
+    red_ratio_threshold: 0.08
+    green_ratio_threshold: 0.08
+    class_command_map: '{"stop sign": "stop", "person": "slow", "car": "slow", "truck": "slow", "bus": "slow", "motorcycle": "slow", "bicycle": "slow"}'
