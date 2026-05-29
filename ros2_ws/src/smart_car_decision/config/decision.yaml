@@ -1,0 +1,33 @@
+decision_controller:
+  ros__parameters:
+    scan_topic: /scan
+    detection_topic: /vision/detection
+    lane_offset_topic: /lane/offset
+    manual_cmd_topic: /manual_cmd
+    cmd_vel_topic: /cmd_vel
+    front_angle_deg: 35.0
+    obstacle_stop_distance: 0.45
+    obstacle_slow_distance: 0.75
+    cruise_speed: 0.18
+    slow_speed: 0.08
+    turn_speed: 0.75
+    lane_kp: 0.9
+    max_angular_speed: 1.2
+    command_timeout_sec: 0.7
+    detection_timeout_sec: 1.5
+    lane_timeout_sec: 0.5
+    publish_rate_hz: 20.0
+
+laser_obstacle_monitor:
+  ros__parameters:
+    scan_topic: /scan
+    obstacle_topic: /obstacle/front
+    front_angle_deg: 35.0
+    obstacle_distance: 0.45
+    publish_rate_hz: 10.0
+
+tcp_command_bridge:
+  ros__parameters:
+    host: 0.0.0.0
+    port: 9999
+    manual_cmd_topic: /manual_cmd
