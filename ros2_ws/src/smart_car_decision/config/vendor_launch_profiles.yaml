@@ -1,0 +1,19 @@
+profiles:
+  base_driver:
+    description: Yahboom X3 mecanum chassis driver. Start before autonomous control.
+    command: "ros2 run yahboomcar_bringup Mcnamu_driver_X3"
+  a1_laser_avoidance:
+    description: Yahboom A1 lidar obstacle-avoidance launch for hardware smoke tests.
+    command: "ros2 launch yahboomcar_laser laser_Avoidance_a1_X3.launch.py"
+  a1_laser_tracker:
+    description: Yahboom A1 lidar tracking launch for reference behavior.
+    command: "ros2 launch yahboomcar_laser laser_Tracker_a1_X3.launch.py"
+  astra_color_tracker:
+    description: Yahboom Astra camera color tracking reference launch.
+    command: "ros2 launch yahboomcar_astra colorTracker_X3.launch.py"
+  line_follow:
+    description: Yahboom line-following reference launch.
+    command: "ros2 launch yahboomcar_linefollow linefollow_X3.launch.py"
+  localization:
+    description: Yahboom localization launch for map-based navigation.
+    command: "ros2 launch yahboomcar_nav localization_imu_odom.launch.py"

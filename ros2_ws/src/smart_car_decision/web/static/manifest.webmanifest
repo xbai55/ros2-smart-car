@@ -1,0 +1,9 @@
+{
+  "name": "ROS2 Smart Car 控制台",
+  "short_name": "Smart Car",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": []
+}

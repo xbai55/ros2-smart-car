@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0f172a" />
+    <link rel="manifest" href="/app/manifest.webmanifest" />
+    <link rel="stylesheet" href="/app/styles.css" />
+    <title>ROS2 Smart Car 运维控制台</title>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">SC</span>
+          <div>
+            <p class="system-name">Yahboom ROSMASTER X3</p>
+            <h1>ROS2 Smart Car 运维控制台</h1>
+          </div>
+        </div>
+        <div class="top-actions">
+          <span id="updatedAt" class="updated-at">等待状态同步</span>
+          <button id="emergencyBtn" class="danger" type="button">急停</button>
+        </div>
+      </header>
+
+      <section class="overview" aria-label="运行总览">
+        <article class="status-card">
+          <span class="card-label">连接状态</span>
+          <strong id="connectionState">连接中</strong>
+          <small id="statusChannel">WebSocket</small>
+        </article>
+        <article class="status-card">
+          <span class="card-label">当前模式</span>
+          <strong id="modeValue">stop</strong>
+          <small id="modeDescription">车辆保持静止</small>
+        </article>
+        <article class="status-card">
+          <span class="card-label">安全互锁</span>
+          <strong id="safetyState">待确认</strong>
+          <small id="estopValue">急停 false</small>
+        </article>
+        <article class="status-card">
+          <span class="card-label">速度比例</span>
+          <strong id="speedValue">100%</strong>
+          <small>发布到 /robot/speed_scale</small>
+        </article>
+      </section>
+
+      <section id="alertBanner" class="alert-banner" hidden>
+        <strong id="alertTitle">安全提示</strong>
+        <span id="alertMessage">请确认小车已架空或处于安全场地。</span>
+      </section>
+
+      <section class="workspace">
+        <section class="panel video-panel">
+          <div class="panel-title">
+            <div>
+              <p class="section-label">Live Camera</p>
+              <h2>现场画面</h2>
+            </div>
+            <button id="reloadVideoBtn" class="ghost" type="button">重连视频</button>
+          </div>
+          <div class="video-frame">
+            <img id="videoFeed" src="/video_feed" alt="小车实时摄像头画面" />
+            <div id="videoOverlay" class="video-overlay">
+              <strong>正在连接摄像头</strong>
+              <span>视觉模式运行时，摄像头可能被 YOLO 或颜色追踪节点占用。</span>
+            </div>
+          </div>
+          <div class="timeline">
+            <div>
+              <span>最近命令</span>
+              <strong id="lastCommand">stop</strong>
+            </div>
+            <div>
+              <span>前方距离</span>
+              <strong id="frontDistance">--</strong>
+            </div>
+            <div>
+              <span>偏移量</span>
+              <strong id="laneOffset">--</strong>
+            </div>
+          </div>
+        </section>
+
+        <aside class="control-stack">
+          <section class="panel">
+            <div class="panel-title">
+              <div>
+                <p class="section-label">Operation Mode</p>
+                <h2>作业模式</h2>
+              </div>
+            </div>
+            <div class="modes" id="modeButtons" aria-label="模式切换"></div>
+            <div class="speed-row">
+              <label class="slider">
+                <span>速度比例</span>
+                <input id="speedScale" type="range" min="0" max="1" step="0.05" value="1" />
+              </label>
+              <button id="saveSpeedBtn" class="ghost compact" type="button">设为默认</button>
+            </div>
+            <p id="speedDefaultHint" class="hint">默认速度保存在当前浏览器。</p>
+            <p id="modeFeedback" class="feedback">默认 stop 模式，切到 manual 后遥控才会生效。</p>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <div>
+                <p class="section-label">Manual Control</p>
+                <h2>手动遥控</h2>
+              </div>
+              <span id="manualLock" class="lock-chip">需切换 manual</span>
+            </div>
+            <div class="remote" aria-label="遥控方向键">
+              <button data-command="forward" type="button">前进</button>
+              <button data-command="turn_l" type="button">左旋</button>
+              <button data-command="stop" class="stop" type="button">停止</button>
+              <button data-command="turn_r" type="button">右旋</button>
+              <button data-command="left" type="button">左移</button>
+              <button data-command="backward" type="button">后退</button>
+              <button data-command="right" type="button">右移</button>
+            </div>
+            <p class="hint">按住方向键发送连续意图，松手自动停车；后端仍保留命令超时停车保护。</p>
+          </section>
+        </aside>
+
+        <section class="panel telemetry-panel">
+          <div class="panel-title">
+            <div>
+              <p class="section-label">Perception & Health</p>
+              <h2>感知与节点健康</h2>
+            </div>
+          </div>
+          <div class="telemetry-grid">
+            <div class="metric">
+              <span>YOLO 结果</span>
+              <strong id="detectionValue">--</strong>
+            </div>
+            <div class="metric">
+              <span>颜色目标</span>
+              <strong id="colorTarget">--</strong>
+            </div>
+            <div class="metric">
+              <span>摄像头</span>
+              <strong id="cameraState">--</strong>
+            </div>
+            <div class="metric">
+              <span>节点在线</span>
+              <strong id="nodeSummary">--</strong>
+            </div>
+          </div>
+          <div id="nodeList" class="node-list" aria-label="节点状态"></div>
+          <details>
+            <summary>原始 JSON 状态</summary>
+            <pre id="rawStatus"></pre>
+          </details>
+        </section>
+
+        <section class="readiness">
+          <h2>发车前检查</h2>
+          <div class="check-grid">
+            <label><input type="checkbox" /> 小车已架空或周围无障碍物</label>
+            <label><input type="checkbox" /> Yahboom 底盘驱动已启动</label>
+            <label><input type="checkbox" /> 雷达、摄像头、网络连接正常</label>
+            <label><input type="checkbox" /> 已确认当前模式和速度比例</label>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script src="/app/app.js"></script>
+  </body>
+</html>

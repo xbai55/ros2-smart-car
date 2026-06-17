@@ -1,0 +1,298 @@
+import asyncio
+import json
+import threading
+import time
+from pathlib import Path
+
+from ament_index_python.packages import get_package_share_directory
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import CompressedImage
+from std_msgs.msg import Bool, Float32, String
+
+from .web_video import AnnotatedFrameStore, should_release_camera_for_mode
+from .web_state import RobotStateStore
+
+
+class WebAppNode(Node):
+    def __init__(self):
+        super().__init__("web_app_node")
+        self.declare_parameter("host", "0.0.0.0")
+        self.declare_parameter("port", 8080)
+        self.declare_parameter("status_topic", "/robot/status")
+        self.declare_parameter("mode_set_topic", "/robot/mode/set")
+        self.declare_parameter("manual_cmd_topic", "/manual_cmd")
+        self.declare_parameter("emergency_stop_set_topic", "/robot/emergency_stop/set")
+        self.declare_parameter("speed_scale_topic", "/robot/speed_scale")
+        self.declare_parameter("annotated_frame_topic", "/vision/annotated_frame")
+        self.declare_parameter("camera_source", "0")
+
+        self.store = RobotStateStore()
+        self.annotated_frames = AnnotatedFrameStore(max_age_sec=1.5)
+        self.camera_stream = None
+        self.mode_pub = self.create_publisher(String, self.get_parameter("mode_set_topic").value, 10)
+        self.cmd_pub = self.create_publisher(String, self.get_parameter("manual_cmd_topic").value, 10)
+        self.estop_pub = self.create_publisher(Bool, self.get_parameter("emergency_stop_set_topic").value, 10)
+        self.speed_pub = self.create_publisher(Float32, self.get_parameter("speed_scale_topic").value, 10)
+        self.create_subscription(String, self.get_parameter("status_topic").value, self.on_status, 10)
+        self.create_subscription(
+            CompressedImage,
+            self.get_parameter("annotated_frame_topic").value,
+            self.on_annotated_frame,
+            2,
+        )
+
+        self._server_thread = threading.Thread(target=self._run_server, daemon=True)
+        self._server_thread.start()
+        self.get_logger().info(
+            f"Web/PWA control server starting on {self.get_parameter('host').value}:{self.get_parameter('port').value}"
+        )
+
+    def on_status(self, msg):
+        try:
+            data = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        self.store.update(**data)
+
+    def on_annotated_frame(self, msg):
+        self.annotated_frames.update(bytes(msg.data))
+
+    def set_mode(self, mode):
+        mode = self.store.set_mode(mode)
+        if should_release_camera_for_mode(mode) and self.camera_stream is not None:
+            self.camera_stream.close()
+        msg = String()
+        msg.data = mode
+        self.mode_pub.publish(msg)
+        return mode
+
+    def set_command(self, command):
+        command = self.store.set_command(command)
+        msg = String()
+        msg.data = command
+        self.cmd_pub.publish(msg)
+        return command
+
+    def set_emergency_stop(self, enabled):
+        state = self.store.set_emergency_stop(enabled)
+        msg = Bool()
+        msg.data = state
+        self.estop_pub.publish(msg)
+        if state:
+            stop = String()
+            stop.data = "stop"
+            self.cmd_pub.publish(stop)
+        return state
+
+    def set_speed_scale(self, value):
+        scale = self.store.set_speed_scale(value)
+        msg = Float32()
+        msg.data = float(scale)
+        self.speed_pub.publish(msg)
+        return scale
+
+    def _run_server(self):
+        try:
+            import cv2
+            import uvicorn
+            from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+            from fastapi.responses import FileResponse, StreamingResponse
+            from fastapi.staticfiles import StaticFiles
+            from pydantic import BaseModel
+        except ImportError as exc:
+            self.get_logger().error(f"Web server dependencies missing: {exc}")
+            return
+
+        node = self
+        camera = CameraStream(
+            str(self.get_parameter("camera_source").value),
+            cv2,
+            lambda: node.store.snapshot().get("mode", "stop"),
+        )
+        node.camera_stream = camera
+        annotated_stream = AnnotatedFrameStream(node.annotated_frames)
+
+        class ModePayload(BaseModel):
+            mode: str
+
+        class CommandPayload(BaseModel):
+            command: str
+
+        class EmergencyPayload(BaseModel):
+            enabled: bool
+
+        class SpeedPayload(BaseModel):
+            scale: float
+
+        app = FastAPI(title="ROS2 Smart Car Control")
+        static_dir = Path(get_package_share_directory("smart_car_decision")) / "web" / "static"
+        app.mount("/app", StaticFiles(directory=str(static_dir), html=True), name="app")
+
+        @app.get("/")
+        def root():
+            return FileResponse(static_dir / "index.html")
+
+        @app.get("/api/status")
+        def status():
+            return node.store.snapshot()
+
+        @app.post("/api/mode")
+        def mode(payload: ModePayload):
+            return {"mode": node.set_mode(payload.mode)}
+
+        @app.post("/api/command")
+        def command(payload: CommandPayload):
+            result = node.set_command(payload.command)
+            if result == "stop" and node.store.snapshot()["mode"] != "manual":
+                raise HTTPException(status_code=409, detail="manual commands require manual mode")
+            return {"command": result}
+
+        @app.post("/api/emergency-stop")
+        def emergency_stop(payload: EmergencyPayload):
+            return {"emergency_stop": node.set_emergency_stop(payload.enabled)}
+
+        @app.post("/api/speed")
+        def speed(payload: SpeedPayload):
+            return {"speed_scale": node.set_speed_scale(payload.scale)}
+
+        @app.get("/video_feed")
+        def video_feed():
+            if camera.is_blocked_by_mode():
+                camera.close()
+                frame = annotated_stream.latest_frame()
+                if frame is None:
+                    raise HTTPException(
+                        status_code=503,
+                        detail="waiting for annotated YOLO frames",
+                    )
+                return StreamingResponse(
+                    annotated_stream.frames(),
+                    media_type="multipart/x-mixed-replace; boundary=frame",
+                )
+            if not camera.open():
+                raise HTTPException(status_code=503, detail="camera is not available")
+            return StreamingResponse(
+                camera.frames(),
+                media_type="multipart/x-mixed-replace; boundary=frame",
+            )
+
+        @app.websocket("/ws/status")
+        async def websocket_status(websocket: WebSocket):
+            await websocket.accept()
+            try:
+                while True:
+                    await websocket.send_json(node.store.snapshot())
+                    await asyncio.sleep(0.5)
+            except WebSocketDisconnect:
+                return
+
+        @app.websocket("/ws/control")
+        async def websocket_control(websocket: WebSocket):
+            await websocket.accept()
+            try:
+                while True:
+                    payload = await websocket.receive_json()
+                    command = str(payload.get("command", "stop"))
+                    result = node.set_command(command)
+                    await websocket.send_json({"command": result})
+            except WebSocketDisconnect:
+                node.set_command("stop")
+
+        config = uvicorn.Config(
+            app,
+            host=str(self.get_parameter("host").value),
+            port=int(self.get_parameter("port").value),
+            log_level="info",
+        )
+        uvicorn.Server(config).run()
+
+
+class CameraStream:
+    blocked_modes = {"auto", "object_follow", "color_track"}
+
+    def __init__(self, source, cv2_module, mode_provider):
+        self.source = source
+        self.cv2 = cv2_module
+        self.mode_provider = mode_provider
+        self.capture = None
+        self.last_open_attempt = 0.0
+
+    def is_blocked_by_mode(self):
+        return self.mode_provider() in self.blocked_modes
+
+    def open(self):
+        if self.is_blocked_by_mode():
+            self.close()
+            return False
+        if self.capture is not None and self.capture.isOpened():
+            return True
+        if time.monotonic() - self.last_open_attempt < 1.0:
+            return False
+        self.last_open_attempt = time.monotonic()
+        try:
+            parsed = int(self.source)
+        except ValueError:
+            parsed = self.source
+        self.capture = self.cv2.VideoCapture(parsed)
+        return self.capture.isOpened()
+
+    def frames(self):
+        try:
+            while True:
+                if not self.open():
+                    return
+                ok, frame = self.capture.read()
+                if not ok:
+                    self.close()
+                    return
+                ok, encoded = self.cv2.imencode(".jpg", frame)
+                if not ok:
+                    continue
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n"
+                    + encoded.tobytes()
+                    + b"\r\n"
+                )
+        finally:
+            self.close()
+
+    def close(self):
+        if self.capture is not None:
+            self.capture.release()
+            self.capture = None
+
+
+class AnnotatedFrameStream:
+    def __init__(self, store):
+        self.store = store
+
+    def latest_frame(self):
+        return self.store.latest()
+
+    def frames(self):
+        while True:
+            frame = self.store.latest()
+            if frame is not None:
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n"
+                    + frame
+                    + b"\r\n"
+                )
+            time.sleep(0.05)
+
+
+def main():
+    rclpy.init()
+    node = WebAppNode()
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()

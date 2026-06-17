@@ -5,12 +5,15 @@ decision_controller:
     lane_offset_topic: /lane/offset
     manual_cmd_topic: /manual_cmd
     cmd_vel_topic: /cmd_vel
+    mode_topic: /robot/mode
+    emergency_stop_topic: /robot/emergency_stop
+    speed_scale_topic: /robot/speed_scale
     front_angle_deg: 35.0
     obstacle_stop_distance: 0.45
     obstacle_slow_distance: 0.75
-    cruise_speed: 0.18
-    slow_speed: 0.08
-    turn_speed: 0.75
+    cruise_speed: 0.28
+    slow_speed: 0.12
+    turn_speed: 1.0
     lane_kp: 0.9
     max_angular_speed: 1.2
     command_timeout_sec: 0.7
@@ -44,8 +47,68 @@ yolo11_camera_node:
     confidence: 0.35
     inference_rate_hz: 10.0
     detection_topic: /vision/detection
+    object_offset_topic: /vision/object_offset
+    annotated_frame_topic: /vision/annotated_frame
+    mode_topic: /robot/mode
+    active_modes: [auto, object_follow]
     default_command: no_light
+    safety_hold_sec: 0.8
+    min_frame_brightness: 20.0
+    min_frame_contrast: 6.0
     publish_every_sec: 0.1
     red_ratio_threshold: 0.08
     green_ratio_threshold: 0.08
     class_command_map: '{"stop sign": "stop", "person": "slow", "car": "slow", "truck": "slow", "bus": "slow", "motorcycle": "slow", "bicycle": "slow"}'
+
+mode_manager:
+  ros__parameters:
+    initial_mode: stop
+    mode_topic: /robot/mode
+    mode_set_topic: /robot/mode/set
+    emergency_stop_topic: /robot/emergency_stop
+    emergency_stop_set_topic: /robot/emergency_stop/set
+    publish_rate_hz: 5.0
+
+color_tracker_node:
+  ros__parameters:
+    camera_source: "0"
+    mode_topic: /robot/mode
+    color_target_topic: /vision/color_target
+    lane_offset_topic: /lane/offset
+    process_rate_hz: 10.0
+    min_area: 500.0
+    hsv_low: [35, 60, 60]
+    hsv_high: [90, 255, 255]
+
+object_follow_node:
+  ros__parameters:
+    mode_topic: /robot/mode
+    object_offset_topic: /vision/object_offset
+    lane_offset_topic: /lane/offset
+    offset_timeout_sec: 0.7
+    publish_rate_hz: 10.0
+
+system_status_node:
+  ros__parameters:
+    status_topic: /robot/status
+    mode_topic: /robot/mode
+    emergency_stop_topic: /robot/emergency_stop
+    speed_scale_topic: /robot/speed_scale
+    scan_topic: /scan
+    detection_topic: /vision/detection
+    color_target_topic: /vision/color_target
+    lane_offset_topic: /lane/offset
+    front_angle_deg: 35.0
+    publish_rate_hz: 2.0
+
+web_app_node:
+  ros__parameters:
+    host: 0.0.0.0
+    port: 8080
+    status_topic: /robot/status
+    mode_set_topic: /robot/mode/set
+    manual_cmd_topic: /manual_cmd
+    emergency_stop_set_topic: /robot/emergency_stop/set
+    speed_scale_topic: /robot/speed_scale
+    annotated_frame_topic: /vision/annotated_frame
+    camera_source: "0"

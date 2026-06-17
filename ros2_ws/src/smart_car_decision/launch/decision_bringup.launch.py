@@ -12,6 +12,13 @@ def generate_launch_description():
         [
             Node(
                 package="smart_car_decision",
+                executable="mode_manager",
+                name="mode_manager",
+                output="screen",
+                parameters=[params],
+            ),
+            Node(
+                package="smart_car_decision",
                 executable="laser_obstacle_monitor",
                 name="laser_obstacle_monitor",
                 output="screen",
@@ -28,6 +35,13 @@ def generate_launch_description():
                 package="smart_car_decision",
                 executable="tcp_command_bridge",
                 name="tcp_command_bridge",
+                output="screen",
+                parameters=[params],
+            ),
+            Node(
+                package="smart_car_decision",
+                executable="system_status_node",
+                name="system_status_node",
                 output="screen",
                 parameters=[params],
             ),

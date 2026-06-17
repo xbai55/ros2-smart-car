@@ -1,12 +1,14 @@
 import sys
 import socket
+import argparse
+import os
 from PyQt6.QtWidgets import (QApplication, QWidget, QGridLayout, 
                              QPushButton, QVBoxLayout, QLabel)
 from PyQt6.QtCore import Qt, QSize
 
 # --- 配置区 ---
-JETSON_IP = '192.168.1.11'  
-PORT = 9999
+JETSON_IP = os.environ.get('SMART_CAR_HOST', '192.168.1.104')
+PORT = int(os.environ.get('SMART_CAR_PORT', '9999'))
 
 class RobotControlPanel(QWidget):
     def __init__(self):
@@ -109,6 +111,13 @@ class RobotControlPanel(QWidget):
             self.btn_widgets[event.key()].setDown(False)
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='ROS2 smart car TCP remote control panel')
+    parser.add_argument('--host', default=JETSON_IP)
+    parser.add_argument('--port', default=PORT, type=int)
+    args, qt_args = parser.parse_known_args()
+    JETSON_IP = args.host
+    PORT = args.port
+    sys.argv = [sys.argv[0]] + qt_args
     app = QApplication(sys.argv)
     panel = RobotControlPanel()
     panel.show()
