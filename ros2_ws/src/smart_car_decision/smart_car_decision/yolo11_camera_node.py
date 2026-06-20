@@ -9,6 +9,7 @@ from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import Float32, String
 
 from .control_policy import normalize_mode
+from .person_target import PersonTargetSelector
 from .yolo_decision import (
     YoloCommandFilter,
     is_frame_obscured,
@@ -48,6 +49,10 @@ class Yolo11CameraNode(Node):
             default_command=self.default_command,
             safety_hold_sec=self.safety_hold_sec,
         )
+        self.person_selector = PersonTargetSelector(
+            lost_timeout_sec=self.person_lock_timeout_sec,
+            max_center_jump_ratio=self.person_max_center_jump_ratio,
+        )
 
         self.last_publish_time = 0.0
         self.last_reopen_time = 0.0
@@ -69,6 +74,8 @@ class Yolo11CameraNode(Node):
         self.declare_parameter("detection_topic", "/vision/detection")
         self.declare_parameter("object_offset_topic", "/vision/object_offset")
         self.declare_parameter("annotated_frame_topic", "/vision/annotated_frame")
+        self.declare_parameter("annotated_jpeg_quality", 72)
+        self.declare_parameter("camera_buffer_size", 1)
         self.declare_parameter("mode_topic", "/robot/mode")
         self.declare_parameter("active_modes", ["auto", "object_follow"])
         self.declare_parameter("default_command", "no_light")
@@ -76,6 +83,8 @@ class Yolo11CameraNode(Node):
         self.declare_parameter("min_frame_brightness", 20.0)
         self.declare_parameter("min_frame_contrast", 6.0)
         self.declare_parameter("publish_every_sec", 0.1)
+        self.declare_parameter("person_lock_timeout_sec", 0.8)
+        self.declare_parameter("person_max_center_jump_ratio", 0.3)
         self.declare_parameter("red_ratio_threshold", 0.08)
         self.declare_parameter("green_ratio_threshold", 0.08)
         self.declare_parameter(
@@ -106,6 +115,11 @@ class Yolo11CameraNode(Node):
         self.detection_topic = str(self.get_parameter("detection_topic").value)
         self.object_offset_topic = str(self.get_parameter("object_offset_topic").value)
         self.annotated_frame_topic = str(self.get_parameter("annotated_frame_topic").value)
+        self.annotated_jpeg_quality = max(
+            30,
+            min(95, int(self.get_parameter("annotated_jpeg_quality").value)),
+        )
+        self.camera_buffer_size = max(1, int(self.get_parameter("camera_buffer_size").value))
         self.mode_topic = str(self.get_parameter("mode_topic").value)
         self.active_modes = {
             normalize_mode(mode) for mode in self.get_parameter("active_modes").value
@@ -115,6 +129,8 @@ class Yolo11CameraNode(Node):
         self.min_frame_brightness = float(self.get_parameter("min_frame_brightness").value)
         self.min_frame_contrast = float(self.get_parameter("min_frame_contrast").value)
         self.publish_every_sec = float(self.get_parameter("publish_every_sec").value)
+        self.person_lock_timeout_sec = float(self.get_parameter("person_lock_timeout_sec").value)
+        self.person_max_center_jump_ratio = float(self.get_parameter("person_max_center_jump_ratio").value)
         self.red_ratio_threshold = float(self.get_parameter("red_ratio_threshold").value)
         self.green_ratio_threshold = float(self.get_parameter("green_ratio_threshold").value)
         self.class_command_map = json.loads(
@@ -150,6 +166,7 @@ class Yolo11CameraNode(Node):
         self.mode = next_mode
         if not self._is_active_mode():
             self._close_camera()
+            self.person_selector.reset()
 
     def _is_active_mode(self):
         return self.mode in self.active_modes
@@ -178,7 +195,10 @@ class Yolo11CameraNode(Node):
             device=self.device,
             verbose=False,
         )
-        command, offset = self._choose_command(frame, results[0])
+        if self.mode == "object_follow":
+            command, offset = self._choose_person_follow(frame, results[0])
+        else:
+            command, offset = self._choose_command(frame, results[0])
         command = self.command_filter.update(command, now=time.monotonic())
         self._publish_annotated_frame(results[0])
         self._publish_command(command)
@@ -186,6 +206,39 @@ class Yolo11CameraNode(Node):
             msg = Float32()
             msg.data = float(offset)
             self.offset_publisher.publish(msg)
+
+    def _choose_person_follow(self, frame, result):
+        if is_frame_obscured(
+            frame,
+            min_brightness=self.min_frame_brightness,
+            min_contrast=self.min_frame_contrast,
+        ):
+            return "stop", None
+
+        boxes = getattr(result, "boxes", None)
+        candidates = []
+        if boxes is not None:
+            for box in boxes:
+                class_id = int(box.cls[0])
+                class_name = result.names.get(class_id, str(class_id))
+                candidates.append(
+                    {
+                        "class_name": class_name,
+                        "confidence": float(box.conf[0]),
+                        "xyxy": tuple(float(value) for value in box.xyxy[0].tolist()),
+                    }
+                )
+        selected = self.person_selector.update(
+            candidates,
+            frame_width=max(1, frame.shape[1]),
+            now=time.monotonic(),
+        )
+        if selected is None:
+            return self.default_command, None
+        center_x = (selected["xyxy"][0] + selected["xyxy"][2]) / 2.0
+        frame_width = max(1, frame.shape[1])
+        offset = (center_x - frame_width / 2.0) / (frame_width / 2.0)
+        return "slow", offset
 
     def _choose_command(self, frame, result):
         if is_frame_obscured(
@@ -273,6 +326,7 @@ class Yolo11CameraNode(Node):
             self.camera.set(self.cv2.CAP_PROP_FRAME_HEIGHT, self.camera_height)
         if self.camera_fps > 0:
             self.camera.set(self.cv2.CAP_PROP_FPS, self.camera_fps)
+        self.camera.set(self.cv2.CAP_PROP_BUFFERSIZE, self.camera_buffer_size)
         if not self.camera.isOpened():
             self._close_camera()
             return False
@@ -303,7 +357,11 @@ class Yolo11CameraNode(Node):
 
     def _publish_annotated_frame(self, result):
         annotated = result.plot()
-        ok, encoded = self.cv2.imencode(".jpg", annotated)
+        ok, encoded = self.cv2.imencode(
+            ".jpg",
+            annotated,
+            [int(self.cv2.IMWRITE_JPEG_QUALITY), self.annotated_jpeg_quality],
+        )
         if not ok:
             return
         msg = CompressedImage()

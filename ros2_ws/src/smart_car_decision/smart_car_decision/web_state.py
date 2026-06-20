@@ -2,6 +2,9 @@ import copy
 import time
 
 from .control_policy import normalize_manual_command, normalize_mode
+from .color_config import DEFAULT_COLOR_CONFIG, normalize_color_config
+
+MIN_SPEED_SCALE = 0.15
 
 
 class RobotStateStore:
@@ -16,6 +19,7 @@ class RobotStateStore:
             "nodes": {},
             "last_command": "stop",
             "speed_scale": 1.0,
+            "color_config": DEFAULT_COLOR_CONFIG,
             "updated_at": time.time(),
         }
 
@@ -54,10 +58,16 @@ class RobotStateStore:
         return self._state["emergency_stop"]
 
     def set_speed_scale(self, value):
-        scale = max(0.0, min(1.0, float(value)))
+        scale = max(MIN_SPEED_SCALE, min(1.0, float(value)))
         self._state["speed_scale"] = scale
         self._touch()
         return scale
+
+    def set_color_config(self, payload):
+        config = normalize_color_config(payload)
+        self._state["color_config"] = config
+        self._touch()
+        return config
 
     def _touch(self):
         self._state["updated_at"] = time.time()

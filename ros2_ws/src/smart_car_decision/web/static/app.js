@@ -1,16 +1,62 @@
 const modes = [
-  ["stop", "停止", "车辆保持静止，适合调试和待机"],
-  ["manual", "手动", "允许网页方向键发布 /manual_cmd"],
-  ["auto", "自动避障", "融合雷达安全策略进行自动行驶"],
-  ["mapping", "建图", "交给厂商 SLAM 链路，不直接发布速度"],
-  ["navigation", "导航", "交给 Nav2 链路，不抢占 /cmd_vel"],
-  ["color_track", "颜色追踪", "HSV 目标追踪并输出偏移量"],
-  ["object_follow", "目标跟随", "YOLO 目标偏移转为跟随控制"],
+  ["stop", "停止", "车辆保持静止，适合调试和待机", "S"],
+  ["manual", "手动", "允许网页方向键发布 /manual_cmd", "M"],
+  ["auto", "自动避障", "融合雷达安全策略进行自动行驶", "A"],
+  ["mapping", "建图", "交给厂商 SLAM 链路，不直接发布速度", "P"],
+  ["navigation", "导航", "交给 Nav2 链路，不抢占 /cmd_vel", "N"],
+  ["color_track", "颜色追踪", "HSV 目标追踪并输出偏移量", "C"],
+  ["object_follow", "目标跟随", "YOLO 目标偏移转为跟随控制", "O"],
 ];
+
+const colorPresets = {
+  green: { label: "绿色", swatch: "#22c55e", hsv_low: [35, 60, 60], hsv_high: [90, 255, 255] },
+  red: { label: "红色", swatch: "#ef4444", hsv_low: [0, 80, 80], hsv_high: [12, 255, 255] },
+  blue: { label: "蓝色", swatch: "#3b82f6", hsv_low: [95, 80, 60], hsv_high: [130, 255, 255] },
+  yellow: { label: "黄色", swatch: "#facc15", hsv_low: [20, 80, 80], hsv_high: [34, 255, 255] },
+};
+
+const modeContexts = {
+  stop: {
+    title: "停止待机",
+    text: "底盘输出保持为零，适合调试、换场地或等待传感器稳定。",
+    steps: ["确认急停状态", "检查节点在线", "需要遥控时切到手动"],
+  },
+  manual: {
+    title: "手动遥控",
+    text: "网页方向键会连续发送 /manual_cmd，松手自动停车。",
+    steps: ["解除急停", "调低速度比例", "按住方向键测试"],
+  },
+  auto: {
+    title: "自动避障",
+    text: "决策节点融合雷达距离和视觉结果输出 /cmd_vel。",
+    steps: ["确认雷达正常", "确认场地安全", "观察前方距离"],
+  },
+  mapping: {
+    title: "建图准备",
+    text: "交给厂商 SLAM 链路，本控制台只保留状态观察和急停。",
+    steps: ["启动 SLAM 相关节点", "保持低速移动", "观察地图链路"],
+  },
+  navigation: {
+    title: "导航任务",
+    text: "交给 Nav2 链路，不抢占 /cmd_vel，只保留安全态势观察。",
+    steps: ["确认定位已稳定", "加载地图", "观察导航状态"],
+  },
+  color_track: {
+    title: "颜色追踪",
+    text: "颜色追踪节点使用 HSV 范围寻找目标，并把偏移量发布到 /lane/offset。",
+    steps: ["选择目标颜色", "必要时微调 HSV", "观察颜色目标和偏移量"],
+  },
+  object_follow: {
+    title: "目标跟随",
+    text: "YOLO 目标偏移会转成跟随控制，适合演示视觉目标追踪。",
+    steps: ["确认 YOLO 画面", "保持目标在视野内", "观察 YOLO 结果"],
+  },
+};
 
 const modeMap = new Map(modes.map(([value, label, description]) => [value, { label, description }]));
 const modeButtons = document.querySelector("#modeButtons");
 const modeFeedback = document.querySelector("#modeFeedback");
+const colorFeedback = document.querySelector("#colorFeedback");
 const videoFeed = document.querySelector("#videoFeed");
 const videoOverlay = document.querySelector("#videoOverlay");
 const remotePanel = document.querySelector(".remote");
@@ -18,6 +64,8 @@ const alertBanner = document.querySelector("#alertBanner");
 const speedScale = document.querySelector("#speedScale");
 const speedDefaultHint = document.querySelector("#speedDefaultHint");
 const DEFAULT_SPEED_KEY = "smart-car-default-speed";
+const DEFAULT_COLOR_KEY = "smart-car-color-config";
+const MIN_SPEED_SCALE = 0.15;
 
 const state = {
   emergency: false,
@@ -28,16 +76,32 @@ const state = {
   lastMode: "stop",
   activeCommand: "",
   commandTimer: null,
+  colorConfig: { name: "green", ...colorPresets.green },
+  colorConfigDirty: false,
 };
 
-for (const [value, label, description] of modes) {
+for (const [value, label, description, shortLabel] of modes) {
   const button = document.createElement("button");
-  button.textContent = label;
+  button.innerHTML = `<span class="mode-icon">${shortLabel}</span><span><strong>${label}</strong><small>${description}</small></span>`;
   button.title = description;
   button.dataset.mode = value;
   button.type = "button";
   button.addEventListener("click", () => setMode(value, label));
   modeButtons.appendChild(button);
+}
+
+for (const [name, preset] of Object.entries(colorPresets)) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.dataset.color = name;
+  button.innerHTML = `<i style="--swatch:${preset.swatch}"></i><span>${preset.label}</span>`;
+  button.addEventListener("click", () => {
+    state.colorConfigDirty = true;
+    setColorInputs({ name, ...preset });
+    renderColorPresetSelection(name);
+    applyColorConfig();
+  });
+  document.querySelector("#colorPresets").appendChild(button);
 }
 
 document.querySelectorAll("[data-command]").forEach((button) => {
@@ -77,7 +141,8 @@ document.querySelector("#emergencyBtn").addEventListener("click", async () => {
 });
 
 speedScale.addEventListener("input", async (event) => {
-  const scale = Number(event.target.value);
+  const scale = normalizeSpeedScale(event.target.value);
+  event.target.value = scale;
   document.querySelector("#speedValue").textContent = `${Math.round(scale * 100)}%`;
   try {
     await postJson("/api/speed", { scale });
@@ -87,12 +152,21 @@ speedScale.addEventListener("input", async (event) => {
 });
 
 document.querySelector("#saveSpeedBtn").addEventListener("click", () => {
-  const scale = Number(speedScale.value);
+  const scale = normalizeSpeedScale(speedScale.value);
+  speedScale.value = scale;
   localStorage.setItem(DEFAULT_SPEED_KEY, String(scale));
   renderDefaultSpeedHint(scale, true);
 });
 
+document.querySelector("#applyColorBtn").addEventListener("click", applyColorConfig);
 document.querySelector("#reloadVideoBtn").addEventListener("click", reloadVideo);
+document.querySelectorAll("#colorPanel input").forEach((input) => {
+  input.addEventListener("input", () => {
+    state.colorConfigDirty = true;
+    document.querySelector("#colorConfigName").textContent = "custom";
+    renderColorPresetSelection("");
+  });
+});
 videoFeed.addEventListener("load", () => setVideoMessage("", true));
 videoFeed.addEventListener("error", () => {
   videoFeed.classList.add("is-broken");
@@ -109,6 +183,27 @@ async function setMode(mode, label) {
     reloadVideo();
   } catch (error) {
     setFeedback(error.message, "error");
+  }
+}
+
+async function applyColorConfig() {
+  const payload = readColorInputs();
+  state.colorConfigDirty = true;
+  try {
+    const result = await postJson("/api/color-target", payload);
+    const config = result.color_config || payload;
+    state.colorConfig = config;
+    state.colorConfigDirty = false;
+    localStorage.setItem(DEFAULT_COLOR_KEY, JSON.stringify(config));
+    renderColorConfig(config);
+    colorFeedback.textContent = `已应用 ${formatColorName(config.name)}，颜色追踪节点会使用新的 HSV 范围。`;
+    colorFeedback.classList.add("is-ok");
+    colorFeedback.classList.remove("is-error");
+  } catch (error) {
+    state.colorConfigDirty = false;
+    colorFeedback.textContent = error.message;
+    colorFeedback.classList.add("is-error");
+    colorFeedback.classList.remove("is-ok");
   }
 }
 
@@ -191,7 +286,7 @@ function connectControl() {
 
 async function applyDefaultSpeed() {
   const saved = Number(localStorage.getItem(DEFAULT_SPEED_KEY));
-  const scale = Number.isFinite(saved) ? Math.max(0, Math.min(1, saved)) : 1;
+  const scale = Number.isFinite(saved) ? normalizeSpeedScale(saved) : 1;
   speedScale.value = scale;
   document.querySelector("#speedValue").textContent = `${Math.round(scale * 100)}%`;
   renderDefaultSpeedHint(scale, false);
@@ -199,6 +294,30 @@ async function applyDefaultSpeed() {
     await postJson("/api/speed", { scale });
   } catch (error) {
     setFeedback(error.message, "error");
+  }
+}
+
+async function applySavedColor() {
+  let config = { name: "green", ...colorPresets.green };
+  try {
+    config = JSON.parse(localStorage.getItem(DEFAULT_COLOR_KEY)) || config;
+  } catch {
+    config = { name: "green", ...colorPresets.green };
+  }
+  state.colorConfigDirty = true;
+  setColorInputs(config);
+  renderColorConfig(config);
+  try {
+    const result = await postJson("/api/color-target", config);
+    const applied = result.color_config || config;
+    state.colorConfig = applied;
+    localStorage.setItem(DEFAULT_COLOR_KEY, JSON.stringify(applied));
+    renderColorConfig(applied);
+  } catch (error) {
+    colorFeedback.textContent = `保存的颜色配置下发失败：${error.message}`;
+    colorFeedback.classList.add("is-error");
+  } finally {
+    state.colorConfigDirty = false;
   }
 }
 
@@ -316,6 +435,15 @@ function renderStatus(status) {
     document.querySelector("#speedValue").textContent = `${Math.round(status.speed_scale * 100)}%`;
     speedScale.value = status.speed_scale;
   }
+  if (!state.colorConfigDirty && status.color_config) {
+    renderColorConfig(status.color_config);
+  } else if (!state.colorConfigDirty && status.color_target?.hsv_low && status.color_target?.hsv_high) {
+    renderColorConfig({
+      name: status.color_target.name || state.colorConfig.name || "custom",
+      hsv_low: status.color_target.hsv_low,
+      hsv_high: status.color_target.hsv_high,
+    });
+  }
 
   document.querySelectorAll("[data-mode]").forEach((button) => {
     button.classList.toggle("active", button.dataset.mode === mode);
@@ -323,7 +451,9 @@ function renderStatus(status) {
 
   renderSafety(status);
   renderManualLock();
+  renderModeContext(mode);
   renderNodes(status.nodes || {});
+  drawRadar(status.radar_points || []);
 }
 
 function renderSafety(status) {
@@ -348,11 +478,29 @@ function renderManualLock() {
   document.querySelector("#manualLock").textContent = ready ? "遥控已解锁" : "需 manual 且非急停";
   document.querySelector("#manualLock").classList.toggle("ready", ready);
   remotePanel.classList.toggle("is-locked", !ready);
+  remotePanel.closest(".panel").classList.toggle("is-emphasis", state.lastMode === "manual");
+}
+
+function renderModeContext(mode) {
+  const context = modeContexts[mode] || modeContexts.stop;
+  document.body.dataset.mode = mode;
+  document.querySelector("#modeContextTitle").textContent = context.title;
+  document.querySelector("#modeContextText").textContent = context.text;
+  document.querySelector("#modeContextChip").textContent = mode;
+  const steps = document.querySelector("#modeContextSteps");
+  steps.replaceChildren();
+  context.steps.forEach((step) => {
+    const item = document.createElement("span");
+    item.textContent = step;
+    steps.appendChild(item);
+  });
+  document.querySelector("#colorPanel").classList.toggle("is-hidden", mode !== "color_track");
+  document.querySelector(".video-panel").classList.toggle("is-vision-mode", ["auto", "color_track", "object_follow"].includes(mode));
 }
 
 function renderNodes(nodes) {
   const entries = Object.entries(nodes);
-  const okCount = entries.filter(([, value]) => value === true || value?.ok === true).length;
+  const okCount = entries.filter(([, value]) => value === true || value === "ok" || value?.ok === true).length;
   document.querySelector("#nodeSummary").textContent = entries.length ? `${okCount}/${entries.length}` : "--";
   const list = document.querySelector("#nodeList");
   list.replaceChildren();
@@ -364,7 +512,7 @@ function renderNodes(nodes) {
     return;
   }
   for (const [name, value] of entries) {
-    const ok = value === true || value?.ok === true;
+    const ok = value === true || value === "ok" || value?.ok === true;
     const warn = value === "degraded" || value?.level === "warn";
     const item = document.createElement("div");
     item.className = "node-item";
@@ -375,6 +523,64 @@ function renderNodes(nodes) {
     item.append(label, dot);
     list.appendChild(item);
   }
+}
+
+function setColorInputs(config) {
+  const low = config.hsv_low || colorPresets.green.hsv_low;
+  const high = config.hsv_high || colorPresets.green.hsv_high;
+  document.querySelector("#hLow").value = low[0];
+  document.querySelector("#sLow").value = low[1];
+  document.querySelector("#vLow").value = low[2];
+  document.querySelector("#hHigh").value = high[0];
+  document.querySelector("#sHigh").value = high[1];
+  document.querySelector("#vHigh").value = high[2];
+  document.querySelector("#colorConfigName").textContent = formatColorName(config.name || "custom");
+}
+
+function readColorInputs() {
+  const matchedPreset = document.querySelector("#colorPresets button.active")?.dataset.color;
+  return {
+    name: matchedPreset || "custom",
+    hsv_low: [
+      readNumber("#hLow", 0, 179),
+      readNumber("#sLow", 0, 255),
+      readNumber("#vLow", 0, 255),
+    ],
+    hsv_high: [
+      readNumber("#hHigh", 0, 179),
+      readNumber("#sHigh", 0, 255),
+      readNumber("#vHigh", 0, 255),
+    ],
+  };
+}
+
+function readNumber(selector, min, max) {
+  const value = Number(document.querySelector(selector).value);
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function normalizeSpeedScale(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return 1;
+  }
+  return Math.max(MIN_SPEED_SCALE, Math.min(1, number));
+}
+
+function renderColorConfig(config) {
+  state.colorConfig = config;
+  document.querySelector("#colorConfigName").textContent = formatColorName(config.name || "custom");
+  document.querySelector("#colorConfigValue").textContent = `${formatColorName(config.name || "custom")} ${formatHsv(config)}`;
+  renderColorPresetSelection(config.name);
+}
+
+function renderColorPresetSelection(name) {
+  document.querySelectorAll("#colorPresets button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.color === name);
+  });
 }
 
 function showAlert(title, message, tone) {
@@ -398,6 +604,9 @@ function formatColorTarget(value) {
   if (typeof value === "string") {
     return value;
   }
+  if (value.found != null) {
+    return value.found ? `visible ${value.offset ?? ""}` : "lost";
+  }
   if (value.name) {
     return value.name;
   }
@@ -415,7 +624,7 @@ function formatCamera(camera) {
     return camera;
   }
   if (camera.ok === true) {
-    return "正常";
+    return "摄像头正常";
   }
   return camera.message || "未就绪";
 }
@@ -429,6 +638,158 @@ function formatUpdatedAt(timestamp) {
     return "状态时间未知";
   }
   return `状态更新 ${date.toLocaleTimeString("zh-CN", { hour12: false })}`;
+}
+
+function formatColorName(name) {
+  return colorPresets[name]?.label || name || "custom";
+}
+
+function formatHsv(config) {
+  if (!config?.hsv_low || !config?.hsv_high) {
+    return "--";
+  }
+  return `${config.hsv_low.join(",")} / ${config.hsv_high.join(",")}`;
+}
+
+function drawRadar(points) {
+  const canvas = document.querySelector("#radarCanvas");
+  const countLabel = document.querySelector("#radarPointCount");
+  if (!canvas || !countLabel) {
+    return;
+  }
+  countLabel.textContent = points.length ? `${points.length} 点` : "等待 /scan";
+  const ctx = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  const originX = width / 2;
+  const originY = height - 34;
+  const scale = 58;
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "#07111f";
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = "rgba(56, 189, 248, 0.22)";
+  ctx.lineWidth = 1;
+  for (let radius = scale; radius <= scale * 4; radius += scale) {
+    ctx.beginPath();
+    ctx.arc(originX, originY, radius, Math.PI, 2 * Math.PI);
+    ctx.stroke();
+  }
+  for (let degree = 0; degree <= 180; degree += 30) {
+    const angle = (degree * Math.PI) / 180;
+    ctx.beginPath();
+    ctx.moveTo(originX, originY);
+    ctx.lineTo(originX + Math.cos(Math.PI - angle) * scale * 4, originY - Math.sin(angle) * scale * 4);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#38bdf8";
+  for (const point of points) {
+    const x = originX + Number(point.y || 0) * scale;
+    const y = originY - Number(point.x || 0) * scale;
+    if (x < 0 || x > width || y < 0 || y > height) {
+      continue;
+    }
+    ctx.beginPath();
+    ctx.arc(x, y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = "#22c55e";
+  ctx.beginPath();
+  ctx.moveTo(originX, originY - 12);
+  ctx.lineTo(originX - 9, originY + 9);
+  ctx.lineTo(originX + 9, originY + 9);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawRadar(points) {
+  const canvas = document.querySelector("#radarCanvas");
+  const countLabel = document.querySelector("#radarPointCount");
+  if (!canvas || !countLabel) {
+    return;
+  }
+  countLabel.textContent = points.length ? `${points.length} pts` : "waiting /scan";
+  const ctx = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  const originX = width / 2;
+  const originY = height - 42;
+  const validDistances = points.map((point) => Number(point.distance || 0)).filter(Number.isFinite);
+  const maxDistance = Math.max(4, ...validDistances);
+  const radiusMax = Math.min(width * 0.44, height - 58);
+  const scale = radiusMax / maxDistance;
+
+  ctx.clearRect(0, 0, width, height);
+  const background = ctx.createLinearGradient(0, 0, 0, height);
+  background.addColorStop(0, "#0b1f3a");
+  background.addColorStop(1, "#06101f");
+  ctx.fillStyle = background;
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.save();
+  ctx.shadowColor = "rgba(56, 189, 248, 0.55)";
+  ctx.shadowBlur = 18;
+  ctx.strokeStyle = "rgba(56, 189, 248, 0.28)";
+  ctx.lineWidth = 1;
+  ctx.font = "12px Microsoft YaHei, Segoe UI, sans-serif";
+  for (let ring = 1; ring <= 4; ring += 1) {
+    const radius = (radiusMax / 4) * ring;
+    ctx.beginPath();
+    ctx.arc(originX, originY, radius, Math.PI, 2 * Math.PI);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(202, 240, 255, 0.58)";
+    ctx.fillText(`${Math.round((maxDistance / 4) * ring)}m`, originX + radius + 4, originY - 5);
+  }
+  for (let degree = 0; degree <= 180; degree += 30) {
+    const angle = (degree * Math.PI) / 180;
+    ctx.beginPath();
+    ctx.moveTo(originX, originY);
+    ctx.lineTo(originX + Math.cos(Math.PI - angle) * radiusMax, originY - Math.sin(angle) * radiusMax);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  if (!points.length) {
+    ctx.fillStyle = "rgba(202, 240, 255, 0.72)";
+    ctx.font = "700 18px Microsoft YaHei, Segoe UI, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Waiting for /scan", originX, height * 0.46);
+    ctx.font = "12px Microsoft YaHei, Segoe UI, sans-serif";
+    ctx.fillText("LaserScan points will refresh here in real time.", originX, height * 0.46 + 24);
+    ctx.textAlign = "start";
+  }
+
+  const sweep = ctx.createLinearGradient(originX, originY, originX, 20);
+  sweep.addColorStop(0, "rgba(56, 189, 248, 0)");
+  sweep.addColorStop(1, "rgba(56, 189, 248, 0.2)");
+  ctx.fillStyle = sweep;
+  ctx.beginPath();
+  ctx.moveTo(originX, originY);
+  ctx.arc(originX, originY, radiusMax, Math.PI * 1.18, Math.PI * 1.42);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = "#67e8f9";
+  ctx.shadowColor = "rgba(103, 232, 249, 0.9)";
+  ctx.shadowBlur = 8;
+  for (const point of points) {
+    const x = originX + Number(point.y || 0) * scale;
+    const y = originY - Number(point.x || 0) * scale;
+    if (x < 0 || x > width || y < 0 || y > height) {
+      continue;
+    }
+    ctx.beginPath();
+    ctx.arc(x, y, 2.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#38bdf8";
+  ctx.beginPath();
+  ctx.moveTo(originX, originY - 12);
+  ctx.lineTo(originX - 9, originY + 9);
+  ctx.lineTo(originX + 9, originY + 9);
+  ctx.closePath();
+  ctx.fill();
 }
 
 function setFeedback(message, type = "") {
@@ -459,7 +820,12 @@ if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/app/service-worker.js").catch(console.warn);
 }
 
-applyDefaultSpeed();
-connectControl();
-connectStatus();
-reloadVideo();
+async function initialize() {
+  await applySavedColor();
+  await applyDefaultSpeed();
+  connectControl();
+  connectStatus();
+  reloadVideo();
+}
+
+initialize();

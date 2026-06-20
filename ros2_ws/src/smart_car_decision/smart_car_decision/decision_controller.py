@@ -7,7 +7,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, Float32, String
 
-from .common import min_front_range, normalize_command
+from .common import front_range_statistic, normalize_command
 from .control_policy import decide_motion, normalize_mode
 
 
@@ -51,6 +51,8 @@ class DecisionController(Node):
         self.declare_parameter("emergency_stop_topic", "/robot/emergency_stop")
         self.declare_parameter("speed_scale_topic", "/robot/speed_scale")
         self.declare_parameter("front_angle_deg", 35.0)
+        self.declare_parameter("front_center_deg", 180.0)
+        self.declare_parameter("front_distance_percentile", 20.0)
         self.declare_parameter("obstacle_stop_distance", 0.45)
         self.declare_parameter("obstacle_slow_distance", 0.75)
         self.declare_parameter("cruise_speed", 0.18)
@@ -61,6 +63,7 @@ class DecisionController(Node):
         self.declare_parameter("command_timeout_sec", 0.7)
         self.declare_parameter("detection_timeout_sec", 1.5)
         self.declare_parameter("lane_timeout_sec", 0.5)
+        self.declare_parameter("scan_timeout_sec", 0.6)
         self.declare_parameter("publish_rate_hz", 20.0)
 
     def _load_parameters(self):
@@ -73,6 +76,8 @@ class DecisionController(Node):
         self.emergency_stop_topic = self.get_parameter("emergency_stop_topic").value
         self.speed_scale_topic = self.get_parameter("speed_scale_topic").value
         self.front_angle = math.radians(float(self.get_parameter("front_angle_deg").value))
+        self.front_center = math.radians(float(self.get_parameter("front_center_deg").value))
+        self.front_distance_percentile = float(self.get_parameter("front_distance_percentile").value)
         self.obstacle_stop_distance = float(self.get_parameter("obstacle_stop_distance").value)
         self.obstacle_slow_distance = float(self.get_parameter("obstacle_slow_distance").value)
         self.cruise_speed = float(self.get_parameter("cruise_speed").value)
@@ -83,10 +88,16 @@ class DecisionController(Node):
         self.command_timeout_sec = float(self.get_parameter("command_timeout_sec").value)
         self.detection_timeout_sec = float(self.get_parameter("detection_timeout_sec").value)
         self.lane_timeout_sec = float(self.get_parameter("lane_timeout_sec").value)
+        self.scan_timeout_sec = float(self.get_parameter("scan_timeout_sec").value)
         self.publish_rate_hz = float(self.get_parameter("publish_rate_hz").value)
 
     def on_scan(self, scan):
-        self.front_distance = min_front_range(scan, self.front_angle)
+        self.front_distance = front_range_statistic(
+            scan,
+            center_angle_rad=self.front_center,
+            half_width_rad=self.front_angle,
+            percentile=self.front_distance_percentile,
+        )
         self.last_scan_time = time.monotonic()
 
     def on_detection(self, msg):
@@ -123,6 +134,7 @@ class DecisionController(Node):
             has_recent_detection=now - self.last_detection_time <= self.detection_timeout_sec,
             has_recent_manual=now - self.last_manual_time <= self.command_timeout_sec,
             has_recent_lane=now - self.last_lane_time <= self.lane_timeout_sec,
+            has_recent_scan=now - self.last_scan_time <= self.scan_timeout_sec,
             obstacle_stop_distance=self.obstacle_stop_distance,
             obstacle_slow_distance=self.obstacle_slow_distance,
             cruise_speed=self.cruise_speed,

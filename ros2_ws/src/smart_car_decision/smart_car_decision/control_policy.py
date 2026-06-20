@@ -50,6 +50,7 @@ def decide_motion(
     has_recent_detection,
     has_recent_manual,
     has_recent_lane,
+    has_recent_scan=True,
     obstacle_stop_distance=0.45,
     obstacle_slow_distance=0.75,
     cruise_speed=0.18,
@@ -64,6 +65,8 @@ def decide_motion(
     manual_command = normalize_manual_command(manual_command)
 
     if emergency_stop or mode == "stop":
+        return zero_motion()
+    if mode in {"auto", "color_track", "object_follow"} and not has_recent_scan:
         return zero_motion()
     if front_distance <= obstacle_stop_distance:
         return zero_motion()

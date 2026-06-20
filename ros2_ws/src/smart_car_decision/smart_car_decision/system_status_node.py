@@ -6,7 +6,8 @@ from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, Float32, String
 
-from .common import min_front_range, normalize_command
+from .common import front_range_statistic, normalize_command
+from .scan_visualization import simplify_scan_points
 
 
 class SystemStatusNode(Node):
@@ -21,6 +22,8 @@ class SystemStatusNode(Node):
         self.declare_parameter("color_target_topic", "/vision/color_target")
         self.declare_parameter("lane_offset_topic", "/lane/offset")
         self.declare_parameter("front_angle_deg", 35.0)
+        self.declare_parameter("front_center_deg", 180.0)
+        self.declare_parameter("front_distance_percentile", 20.0)
         self.declare_parameter("publish_rate_hz", 2.0)
 
         self.state = {
@@ -30,6 +33,7 @@ class SystemStatusNode(Node):
             "detection": "",
             "color_target": None,
             "lane_offset": 0.0,
+            "radar_points": [],
             "speed_scale": 1.0,
             "camera": {"ok": None, "message": "unknown"},
             "nodes": {"system_status_node": "ok"},
@@ -45,6 +49,8 @@ class SystemStatusNode(Node):
         self.create_subscription(String, self.get_parameter("color_target_topic").value, self.on_color_target, 10)
         self.create_subscription(Float32, self.get_parameter("lane_offset_topic").value, self.on_lane_offset, 10)
         self.front_angle_rad = float(self.get_parameter("front_angle_deg").value) * 3.1415926 / 180.0
+        self.front_center_rad = float(self.get_parameter("front_center_deg").value) * 3.1415926 / 180.0
+        self.front_distance_percentile = float(self.get_parameter("front_distance_percentile").value)
         rate = float(self.get_parameter("publish_rate_hz").value)
         self.create_timer(1.0 / rate, self.publish_status)
 
@@ -61,8 +67,16 @@ class SystemStatusNode(Node):
         self._touch()
 
     def on_scan(self, scan):
-        distance = min_front_range(scan, self.front_angle_rad)
+        distance = front_range_statistic(
+            scan,
+            center_angle_rad=self.front_center_rad,
+            half_width_rad=self.front_angle_rad,
+            percentile=self.front_distance_percentile,
+        )
         self.state["front_distance"] = None if distance == float("inf") else round(distance, 3)
+        self.state["radar_points"] = simplify_scan_points(
+            scan, max_points=96, rotation_rad=self.front_center_rad
+        )
         self._touch()
 
     def on_detection(self, msg):

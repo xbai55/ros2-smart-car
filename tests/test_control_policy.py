@@ -139,3 +139,20 @@ def test_object_follow_mode_turns_toward_target_offset():
     )
     assert motion["linear_x"] == 0.08
     assert motion["angular_z"] == pytest.approx(0.36)
+
+
+def test_stale_lidar_scan_stops_autonomous_person_follow():
+    motion = decide_motion(
+        mode="object_follow",
+        emergency_stop=False,
+        front_distance=10.0,
+        detection="slow",
+        manual_command="stop",
+        lane_offset=0.2,
+        has_recent_detection=True,
+        has_recent_manual=False,
+        has_recent_lane=True,
+        has_recent_scan=False,
+    )
+
+    assert motion == {"linear_x": 0.0, "linear_y": 0.0, "angular_z": 0.0}

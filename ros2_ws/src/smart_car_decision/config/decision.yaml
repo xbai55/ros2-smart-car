@@ -9,6 +9,8 @@ decision_controller:
     emergency_stop_topic: /robot/emergency_stop
     speed_scale_topic: /robot/speed_scale
     front_angle_deg: 35.0
+    front_center_deg: 180.0
+    front_distance_percentile: 20.0
     obstacle_stop_distance: 0.45
     obstacle_slow_distance: 0.75
     cruise_speed: 0.28
@@ -19,6 +21,7 @@ decision_controller:
     command_timeout_sec: 0.7
     detection_timeout_sec: 1.5
     lane_timeout_sec: 0.5
+    scan_timeout_sec: 0.6
     publish_rate_hz: 20.0
 
 laser_obstacle_monitor:
@@ -49,6 +52,8 @@ yolo11_camera_node:
     detection_topic: /vision/detection
     object_offset_topic: /vision/object_offset
     annotated_frame_topic: /vision/annotated_frame
+    annotated_jpeg_quality: 72
+    camera_buffer_size: 1
     mode_topic: /robot/mode
     active_modes: [auto, object_follow]
     default_command: no_light
@@ -56,6 +61,8 @@ yolo11_camera_node:
     min_frame_brightness: 20.0
     min_frame_contrast: 6.0
     publish_every_sec: 0.1
+    person_lock_timeout_sec: 0.8
+    person_max_center_jump_ratio: 0.3
     red_ratio_threshold: 0.08
     green_ratio_threshold: 0.08
     class_command_map: '{"stop sign": "stop", "person": "slow", "car": "slow", "truck": "slow", "bus": "slow", "motorcycle": "slow", "bicycle": "slow"}'
@@ -74,7 +81,11 @@ color_tracker_node:
     camera_source: "0"
     mode_topic: /robot/mode
     color_target_topic: /vision/color_target
+    color_config_topic: /vision/color_config
     lane_offset_topic: /lane/offset
+    annotated_frame_topic: /vision/annotated_frame
+    annotated_jpeg_quality: 72
+    camera_buffer_size: 1
     process_rate_hz: 10.0
     min_area: 500.0
     hsv_low: [35, 60, 60]
@@ -99,16 +110,23 @@ system_status_node:
     color_target_topic: /vision/color_target
     lane_offset_topic: /lane/offset
     front_angle_deg: 35.0
+    front_center_deg: 180.0
+    front_distance_percentile: 20.0
     publish_rate_hz: 2.0
 
 web_app_node:
   ros__parameters:
     host: 0.0.0.0
     port: 8080
+    static_dir: /home/jetson/ros2-smart-car/web-console/dist
     status_topic: /robot/status
     mode_set_topic: /robot/mode/set
     manual_cmd_topic: /manual_cmd
     emergency_stop_set_topic: /robot/emergency_stop/set
     speed_scale_topic: /robot/speed_scale
+    color_config_topic: /vision/color_config
     annotated_frame_topic: /vision/annotated_frame
     camera_source: "0"
+    video_fps: 30.0
+    video_target_fps: 20.0
+    annotated_stream_fps: 20.0

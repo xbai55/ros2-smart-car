@@ -10,6 +10,8 @@ from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import Bool, Float32, String
 
+from .web_camera import CameraStream
+from .web_static import resolve_static_dir
 from .web_video import AnnotatedFrameStore, should_release_camera_for_mode
 from .web_state import RobotStateStore
 
@@ -24,8 +26,13 @@ class WebAppNode(Node):
         self.declare_parameter("manual_cmd_topic", "/manual_cmd")
         self.declare_parameter("emergency_stop_set_topic", "/robot/emergency_stop/set")
         self.declare_parameter("speed_scale_topic", "/robot/speed_scale")
+        self.declare_parameter("color_config_topic", "/vision/color_config")
         self.declare_parameter("annotated_frame_topic", "/vision/annotated_frame")
         self.declare_parameter("camera_source", "0")
+        self.declare_parameter("video_fps", 30.0)
+        self.declare_parameter("video_target_fps", 20.0)
+        self.declare_parameter("annotated_stream_fps", 20.0)
+        self.declare_parameter("static_dir", "")
 
         self.store = RobotStateStore()
         self.annotated_frames = AnnotatedFrameStore(max_age_sec=1.5)
@@ -34,6 +41,7 @@ class WebAppNode(Node):
         self.cmd_pub = self.create_publisher(String, self.get_parameter("manual_cmd_topic").value, 10)
         self.estop_pub = self.create_publisher(Bool, self.get_parameter("emergency_stop_set_topic").value, 10)
         self.speed_pub = self.create_publisher(Float32, self.get_parameter("speed_scale_topic").value, 10)
+        self.color_config_pub = self.create_publisher(String, self.get_parameter("color_config_topic").value, 10)
         self.create_subscription(String, self.get_parameter("status_topic").value, self.on_status, 10)
         self.create_subscription(
             CompressedImage,
@@ -92,6 +100,13 @@ class WebAppNode(Node):
         self.speed_pub.publish(msg)
         return scale
 
+    def set_color_config(self, payload):
+        config = self.store.set_color_config(payload)
+        msg = String()
+        msg.data = json.dumps(config, ensure_ascii=False)
+        self.color_config_pub.publish(msg)
+        return config
+
     def _run_server(self):
         try:
             import cv2
@@ -109,9 +124,14 @@ class WebAppNode(Node):
             str(self.get_parameter("camera_source").value),
             cv2,
             lambda: node.store.snapshot().get("mode", "stop"),
+            capture_fps=float(self.get_parameter("video_fps").value),
+            target_fps=float(self.get_parameter("video_target_fps").value),
         )
         node.camera_stream = camera
-        annotated_stream = AnnotatedFrameStream(node.annotated_frames)
+        annotated_stream = AnnotatedFrameStream(
+            node.annotated_frames,
+            target_fps=float(self.get_parameter("annotated_stream_fps").value),
+        )
 
         class ModePayload(BaseModel):
             mode: str
@@ -125,9 +145,18 @@ class WebAppNode(Node):
         class SpeedPayload(BaseModel):
             scale: float
 
+        class ColorConfigPayload(BaseModel):
+            name: str = "custom"
+            hsv_low: list[int]
+            hsv_high: list[int]
+
         app = FastAPI(title="ROS2 Smart Car Control")
-        static_dir = Path(get_package_share_directory("smart_car_decision")) / "web" / "static"
+        package_static_dir = Path(get_package_share_directory("smart_car_decision")) / "web" / "static"
+        static_dir = resolve_static_dir(self.get_parameter("static_dir").value, package_static_dir)
         app.mount("/app", StaticFiles(directory=str(static_dir), html=True), name="app")
+        assets_dir = static_dir / "assets"
+        if assets_dir.is_dir():
+            app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
         @app.get("/")
         def root():
@@ -156,16 +185,14 @@ class WebAppNode(Node):
         def speed(payload: SpeedPayload):
             return {"speed_scale": node.set_speed_scale(payload.scale)}
 
+        @app.post("/api/color-target")
+        def color_target(payload: ColorConfigPayload):
+            return {"color_config": node.set_color_config(payload.dict())}
+
         @app.get("/video_feed")
         def video_feed():
             if camera.is_blocked_by_mode():
                 camera.close()
-                frame = annotated_stream.latest_frame()
-                if frame is None:
-                    raise HTTPException(
-                        status_code=503,
-                        detail="waiting for annotated YOLO frames",
-                    )
                 return StreamingResponse(
                     annotated_stream.frames(),
                     media_type="multipart/x-mixed-replace; boundary=frame",
@@ -208,72 +235,22 @@ class WebAppNode(Node):
         uvicorn.Server(config).run()
 
 
-class CameraStream:
-    blocked_modes = {"auto", "object_follow", "color_track"}
-
-    def __init__(self, source, cv2_module, mode_provider):
-        self.source = source
-        self.cv2 = cv2_module
-        self.mode_provider = mode_provider
-        self.capture = None
-        self.last_open_attempt = 0.0
-
-    def is_blocked_by_mode(self):
-        return self.mode_provider() in self.blocked_modes
-
-    def open(self):
-        if self.is_blocked_by_mode():
-            self.close()
-            return False
-        if self.capture is not None and self.capture.isOpened():
-            return True
-        if time.monotonic() - self.last_open_attempt < 1.0:
-            return False
-        self.last_open_attempt = time.monotonic()
-        try:
-            parsed = int(self.source)
-        except ValueError:
-            parsed = self.source
-        self.capture = self.cv2.VideoCapture(parsed)
-        return self.capture.isOpened()
-
-    def frames(self):
-        try:
-            while True:
-                if not self.open():
-                    return
-                ok, frame = self.capture.read()
-                if not ok:
-                    self.close()
-                    return
-                ok, encoded = self.cv2.imencode(".jpg", frame)
-                if not ok:
-                    continue
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n\r\n"
-                    + encoded.tobytes()
-                    + b"\r\n"
-                )
-        finally:
-            self.close()
-
-    def close(self):
-        if self.capture is not None:
-            self.capture.release()
-            self.capture = None
-
-
 class AnnotatedFrameStream:
-    def __init__(self, store):
+    def __init__(self, store, target_fps=20.0):
         self.store = store
+        self.target_fps = max(1.0, float(target_fps))
 
     def latest_frame(self):
         return self.store.latest()
 
     def frames(self):
+        last_version = 0
+        timeout = 1.0 / self.target_fps
         while True:
-            frame = self.store.latest()
+            frame, last_version = self.store.wait_for_frame(
+                last_version=last_version,
+                timeout=timeout,
+            )
             if frame is not None:
                 yield (
                     b"--frame\r\n"
@@ -281,7 +258,6 @@ class AnnotatedFrameStream:
                     + frame
                     + b"\r\n"
                 )
-            time.sleep(0.05)
 
 
 def main():
