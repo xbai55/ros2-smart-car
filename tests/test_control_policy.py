@@ -156,3 +156,39 @@ def test_stale_lidar_scan_stops_autonomous_person_follow():
     )
 
     assert motion == {"linear_x": 0.0, "linear_y": 0.0, "angular_z": 0.0}
+
+
+def test_mapping_mode_accepts_fresh_manual_commands_through_safety_controller():
+    motion = decide_motion(
+        mode="mapping",
+        emergency_stop=False,
+        front_distance=2.0,
+        detection="",
+        manual_command="forward",
+        lane_offset=0.0,
+        has_recent_detection=False,
+        has_recent_manual=True,
+        has_recent_lane=False,
+        has_recent_scan=True,
+    )
+
+    assert motion["linear_x"] > 0.0
+
+
+def test_mapping_mode_stops_when_scan_or_manual_command_is_stale():
+    common = dict(
+        mode="mapping",
+        emergency_stop=False,
+        front_distance=2.0,
+        detection="",
+        manual_command="forward",
+        lane_offset=0.0,
+        has_recent_detection=False,
+        has_recent_lane=False,
+    )
+
+    stale_scan = decide_motion(**common, has_recent_manual=True, has_recent_scan=False)
+    stale_command = decide_motion(**common, has_recent_manual=False, has_recent_scan=True)
+
+    assert stale_scan == {"linear_x": 0.0, "linear_y": 0.0, "angular_z": 0.0}
+    assert stale_command == {"linear_x": 0.0, "linear_y": 0.0, "angular_z": 0.0}

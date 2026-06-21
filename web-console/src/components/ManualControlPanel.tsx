@@ -7,8 +7,9 @@ type Props = { currentMode: ModeId; speed: number; onSpeedChange: (speed: number
 
 export function ManualControlPanel({ currentMode, speed, onSpeedChange, onCommand }: Props) {
   const modeName = modes.find((mode) => mode.id === currentMode)?.name ?? "停止";
+  const subtitle = currentMode === "mapping" ? "建图安全遥控" : "手动遥控";
   return (
-    <HudPanel className="manual-panel" title="Manual Control" subtitle="手动遥控" action={<span className="tag-pill">/api/command</span>}>
+    <HudPanel className="manual-panel" title="Manual Control" subtitle={subtitle} action={<span className="tag-pill">/api/command</span>}>
       <div className="manual-layout">
         <div className="drive-pad">{manualCommands.map((command)=>{const Icon=command.icon;return (
           <button key={command.id} type="button" className={`drive-btn ${command.slot} ${command.danger ? "danger" : ""}`} onClick={()=>onCommand(command.id)} title={command.label}>

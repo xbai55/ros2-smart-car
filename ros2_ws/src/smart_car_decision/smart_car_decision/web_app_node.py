@@ -173,8 +173,8 @@ class WebAppNode(Node):
         @app.post("/api/command")
         def command(payload: CommandPayload):
             result = node.set_command(payload.command)
-            if result == "stop" and node.store.snapshot()["mode"] != "manual":
-                raise HTTPException(status_code=409, detail="manual commands require manual mode")
+            if result == "stop" and node.store.snapshot()["mode"] not in {"manual", "mapping"}:
+                raise HTTPException(status_code=409, detail="manual commands require manual or mapping mode")
             return {"command": result}
 
         @app.post("/api/emergency-stop")

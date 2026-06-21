@@ -66,11 +66,11 @@ def decide_motion(
 
     if emergency_stop or mode == "stop":
         return zero_motion()
-    if mode in {"auto", "color_track", "object_follow"} and not has_recent_scan:
+    if mode in {"auto", "color_track", "object_follow", "mapping"} and not has_recent_scan:
         return zero_motion()
     if front_distance <= obstacle_stop_distance:
         return zero_motion()
-    if mode in {"mapping", "navigation"}:
+    if mode == "navigation":
         return zero_motion()
 
     speed_scale = clamp(float(speed_scale), 0.0, 1.0)
@@ -79,7 +79,7 @@ def decide_motion(
     scaled_turn_speed = turn_speed * speed_scale
     speed = scaled_slow_speed if front_distance <= obstacle_slow_distance else scaled_cruise_speed
 
-    if mode == "manual":
+    if mode in {"manual", "mapping"}:
         if not has_recent_manual:
             return zero_motion()
         return _manual_motion(manual_command, speed, scaled_turn_speed)

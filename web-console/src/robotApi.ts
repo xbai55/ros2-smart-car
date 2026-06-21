@@ -1,5 +1,13 @@
 export type ConnectionState = "connecting" | "connected" | "disconnected";
 export type RadarPoint = { x: number; y: number; distance: number };
+export type LidarHealth = {
+  ok: boolean; message: string; scan_age_sec: number | null; scan_rate_hz: number;
+  valid_count: number; valid_ratio: number; frame_id: string;
+};
+export type MapHealth = {
+  ok: boolean; message: string; map_age_sec: number | null; width: number;
+  height: number; resolution: number; frame_id: string;
+};
 export type ColorConfig = { name: string; hsv_low: [number, number, number]; hsv_high: [number, number, number] };
 export type ColorTarget = { visible?: boolean; offset?: number; area?: number; raw?: string };
 export type RobotStatus = {
@@ -7,12 +15,16 @@ export type RobotStatus = {
   color_target: ColorTarget | null; camera: { ok: boolean | null; message: string };
   nodes: Record<string, string>; last_command: string; speed_scale: number;
   color_config: ColorConfig; updated_at: number; lane_offset: number; radar_points: RadarPoint[];
+  lidar: LidarHealth;
+  map: MapHealth;
 };
 export const initialRobotStatus: RobotStatus = {
   mode: "stop", emergency_stop: false, front_distance: null, detection: "", color_target: null,
   camera: { ok: null, message: "等待视频" }, nodes: {}, last_command: "stop", speed_scale: 1,
   color_config: { name: "green", hsv_low: [35, 60, 60], hsv_high: [90, 255, 255] },
-  updated_at: 0, lane_offset: 0, radar_points: []
+  updated_at: 0, lane_offset: 0, radar_points: [],
+  lidar: { ok: false, message: "no_data", scan_age_sec: null, scan_rate_hz: 0, valid_count: 0, valid_ratio: 0, frame_id: "" },
+  map: { ok: false, message: "no_map", map_age_sec: null, width: 0, height: 0, resolution: 0, frame_id: "" }
 };
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 async function readJson<T>(response: Response): Promise<T> {

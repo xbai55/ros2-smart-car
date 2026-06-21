@@ -10,15 +10,16 @@
 | --- | --- | --- |
 | ROS2 底盘接入 | 已实现并实车运行 | 启动 Yahboom `Mcnamu_driver_X3`，接收 `/cmd_vel` 控制底盘 |
 | 模式管理与急停 | 已实现并测试 | 支持 7 种模式；急停拥有最高控制优先级 |
-| 网页手动遥控 | 已实现并测试 | 浏览器发送方向命令，非 `manual` 模式下拒绝移动命令 |
-| 激光雷达显示与安全停车 | 已实现并实车测试 | 显示 `/scan` 点云和前方距离，支持近障停车、减速和雷达超时停车 |
+| 网页手动遥控 | 已实现并测试 | 浏览器发送方向命令，`manual` 和 `mapping` 模式允许移动命令 |
+| 激光雷达显示与安全停车 | 已实现并实车测试 | 显示 `/scan` 点云和前方距离，支持近障停车、减速、雷达超时停车和健康状态 |
 | YOLO11 通用目标识别 | 已实现并实车运行 | 使用 `yolo11s.pt`，发布识别结果和标注视频帧 |
 | 人物目标跟随 | 已实现，完成感知链路测试 | 只选择 `person`，支持目标锁定、短时丢失保持和偏移控制；尚未完成空旷场地连续轨迹测试 |
 | HSV 颜色追踪 | 已实现并实车运行 | 支持红、绿、蓝、黄预设和自定义 HSV 范围 |
 | 颜色配置保存 | 已实现并测试 | 保存在浏览器本地，刷新后重新下发到 ROS；不是 Jetson 端永久配置文件 |
 | Web 状态与视频 | 已实现并测试 | 提供 REST、WebSocket、MJPEG/标注帧转发和雷达可视化 |
 | Docker 工程文件 | 已提供 | 已有 Dockerfile 和运行脚本，但未完成当前版本的完整实车容器验收 |
-| SLAM、建图和 Nav2 导航 | 未完成 | 已保留模式和厂商参考启动项，当前决策节点不会在这些模式下直接输出运动速度 |
+| SLAM 与地图资产 | 代码已实现，待 Jetson 验收 | 已有 slam_toolbox 配置、建图 launch、地图保存/加载和质量报告工具 |
+| Nav2 导航 | 未完成 | 不在当前扫描与建图开发范围内 |
 | 机械臂抓取 | 未完成 | 不在当前软件闭环中 |
 
 ## 2. 项目边界与自研部分
@@ -140,7 +141,7 @@ ros2-smart-car/
 | `auto` | 根据 YOLO 语义结果执行停车、减速或直行，同时受雷达安全层约束 |
 | `color_track` | 根据颜色目标横向偏移低速前进和转向；目标偏移失效则停车 |
 | `object_follow` | 只跟随 `person`，根据人物中心偏移低速前进和转向 |
-| `mapping` | 当前不直接发布运动速度，避免与厂商建图控制链路争抢 `/cmd_vel` |
+| `mapping` | 接受网页或 TCP 手动命令，通过统一安全控制器发布 `/cmd_vel`；雷达或命令超时则停车 |
 | `navigation` | 当前不直接发布运动速度，尚未接入完整 Nav2 目标导航闭环 |
 
 ## 8. 核心功能与算法
@@ -301,7 +302,44 @@ ros2 topic hz /scan
 ros2 topic hz /vision/annotated_frame
 ```
 
-### 10.3 PC 旧版遥控工具
+### 10.3 Jetson 建图
+
+构建后先检查扫描、里程计、TF 和 SLAM 包：
+
+```bash
+bash scripts/check_mapping_prereqs.sh
+```
+
+启动建图。默认假设厂商 URDF 已发布雷达 TF；只有确认缺失时才启用本项目静态 TF，并填写实测安装参数：
+
+```bash
+ros2 launch smart_car_decision mapping.launch.py
+
+ros2 launch smart_car_decision mapping.launch.py \
+  publish_laser_tf:=true laser_x:=0.0 laser_y:=0.0 laser_z:=0.0 \
+  laser_yaw:=3.141592653589793
+```
+
+建图模式仍由 `decision_controller` 唯一发布最终 `/cmd_vel`。使用 Web 将模式切换为 `mapping` 后低速遥控；急停、近障、雷达超时和命令超时仍会停车。
+
+录制和回放建图输入：
+
+```bash
+bash scripts/record_lidar_bag.sh bags/lab-20260621
+bash scripts/replay_lidar_bag.sh bags/lab-20260621
+```
+
+保存、检查和重新加载地图：
+
+```bash
+ros2 run smart_car_decision map_asset save lab-20260621 \
+  --site engineering-lab --bag-path bags/lab-20260621
+ros2 run smart_car_decision map_asset inspect maps/lab-20260621/map.yaml
+ros2 launch smart_car_decision map_view.launch.py \
+  map:=$PWD/maps/lab-20260621/map.yaml
+```
+
+### 10.4 PC 旧版遥控工具
 
 ```bash
 python ros2_command/pc.py --host 192.168.1.104 --port 9999
@@ -309,7 +347,7 @@ python ros2_command/pc.py --host 192.168.1.104 --port 9999
 
 支持 `forward`、`backward`、`left`、`right`、`turn_l`、`turn_r` 和 `stop`。这些命令经 `tcp_command_bridge` 转换为 `/manual_cmd`。
 
-### 10.4 Docker
+### 10.5 Docker
 
 仓库提供 `Dockerfile`、`scripts/build_jetson.sh` 和 `scripts/run_docker.sh`。容器使用 host 网络和设备映射，以便访问 ROS2 网络、相机和串口。当前建议优先使用已经完成实车验证的 Jetson 原生运行方式。
 
@@ -323,13 +361,13 @@ python ros2_command/pc.py --host 192.168.1.104 --port 9999
 PYTHONPATH=ros2_ws/src/smart_car_decision python -m pytest -q
 ```
 
-最近一次本地与 Jetson 运行结果均为：
+当前分支最近一次本地运行结果为：
 
 ```text
-37 passed
+55 passed
 ```
 
-37 项测试覆盖以下方面：
+55 项测试覆盖以下方面：
 
 | 测试组 | 覆盖内容 |
 | --- | --- |
@@ -337,6 +375,9 @@ PYTHONPATH=ros2_ws/src/smart_car_decision python -m pytest -q
 | 控制策略 | 非法模式、停止模式、急停、手动命令超时、近障停车、识别超时、速度比例、人物偏移转向、雷达超时停车 |
 | 人物锁定 | 忽略非人物类别、初次选择、检测顺序变化时保持目标、丢失超时后重新选择 |
 | 雷达处理 | 无效距离过滤、点云投影、180° 前方扇区、跨 ±π 角度、低分位抗噪、空扇区、显示坐标旋转 |
+| 雷达健康 | 扫描频率、数据年龄、有效率、未收到、过期和恢复状态 |
+| 建图配置 | mapping 安全遥控、SLAM 参数、依赖、launch 和静态 TF 开关 |
+| 地图资产 | 地图 ID、PGM 质量统计、元数据、地图加载和生命周期管理 |
 | YOLO 决策 | 遮挡画面停车、未知类别归一化、安全命令短时保持 |
 | Web 状态 | 非法模式拒绝、非手动模式拒绝手动命令、急停状态更新 |
 | 视频流 | 标注帧新鲜度、空帧和过期帧拒绝、等待新版本、视觉模式释放网页直连相机 |
@@ -350,6 +391,8 @@ PYTHONPATH=ros2_ws/src/smart_car_decision python -m pytest -q
 ```bash
 node --experimental-strip-types --test --test-isolation=none \
   web-console/tests/colorPersistence.test.ts \
+  web-console/tests/lidarHealth.test.ts \
+  web-console/tests/mappingControl.test.ts \
   web-console/tests/robotApi.test.ts \
   web-console/tests/videoState.test.ts
 ```
@@ -357,7 +400,7 @@ node --experimental-strip-types --test --test-isolation=none \
 最近一次结果为：
 
 ```text
-7 passed
+10 passed
 ```
 
 覆盖内容包括：
@@ -369,6 +412,8 @@ node --experimental-strip-types --test --test-isolation=none \
 - WebSocket 地址随 HTTP/HTTPS 和主机变化；
 - 视频加载完成状态；
 - 视频加载看门狗超时状态。
+- 雷达健康状态和操作员提示。
+- `mapping` 模式复用安全手动遥控面板。
 
 生产构建命令：
 
@@ -403,9 +448,10 @@ TypeScript 编译和 Vite 生产构建已通过，生成的带哈希资源已部
 ### 13.1 需要优先完成
 
 1. **人物连续运动跟随测试**：需要在空旷、无台阶场地测试直行、转向、目标横穿、短时遮挡、多人交叉和目标离开等工况，并记录轨迹、偏移和停车距离。
-2. **辅助障碍节点方向统一**：核心 `decision_controller` 和状态显示已经使用 180° 车头方向，但 `laser_obstacle_monitor` 仍保留较早的零度中心简化逻辑。该节点目前不是核心运动决策的安全来源，后续仍应统一参数和算法。
-3. **颜色配置后端持久化**：当前配置保存在浏览器本地。后续可在 Jetson 保存 YAML/JSON，使所有终端和系统重启前后共享同一配置。
-4. **系统化 Web 视觉回归**：已完成前端单元测试、构建和 HTTP 检查，但还缺少多浏览器、手机尺寸、弱网、断线重连和长时间运行的完整自动化 UI 测试。
+2. **Jetson 建图验收**：需要实测 `/odom`、TF、雷达安装位姿、闭环地图和地图重新加载；当前只能确认代码、配置和自动化测试通过。
+3. **地图质量对比**：需要在实际场地完成至少两次独立建图，记录墙体连续性、重影、闭环偏差和实际尺寸误差。
+4. **颜色配置后端持久化**：当前配置保存在浏览器本地。后续可在 Jetson 保存 YAML/JSON，使所有终端和系统重启前后共享同一配置。
+5. **系统化 Web 视觉回归**：已完成前端单元测试、构建和 HTTP 检查，但还缺少多浏览器、手机尺寸、弱网、断线重连和长时间运行的完整自动化 UI 测试。
 
 ### 13.2 算法能力限制
 
@@ -417,7 +463,7 @@ TypeScript 编译和 Vite 生产构建已通过，生成的带哈希资源已部
 
 ### 13.3 尚未形成完整闭环的项目目标
 
-- SLAM 建图结果保存、地图质量评估和 Web 地图展示；
+- SLAM 和地图资产代码已实现，但 Jetson 建图、地图质量评估和 Web 地图图像展示尚未完成实车闭环；
 - Nav2 定位、目标点下发、全局/局部规划和动态避障闭环；
 - 深度相机点云、三维障碍距离和视觉—雷达外参标定；
 - 机械臂检测、定位、抓取和底盘协同；
