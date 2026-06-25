@@ -1,5 +1,6 @@
 import { Database, RadioTower, ScanLine, Sigma } from "lucide-react";
-import type { RadarPoint } from "../robotApi";
+import type { LidarHealth, RadarPoint } from "../robotApi";
+import { lidarHealthLabel } from "../lidarHealth";
 import { HudPanel } from "./HudPanel";
 
 const center = { x: 420, y: 330 };
@@ -21,9 +22,9 @@ function arcPath(radius: number) {
   return `M ${center.x - radius} ${center.y} A ${radius} ${radius} 0 0 1 ${center.x + radius} ${center.y}`;
 }
 
-type LidarPanelProps = { points: RadarPoint[]; frontDistance: number | null };
+type LidarPanelProps = { points: RadarPoint[]; frontDistance: number | null; lidar: LidarHealth };
 
-export function LidarPanel({ points, frontDistance }: LidarPanelProps) {
+export function LidarPanel({ points, frontDistance, lidar }: LidarPanelProps) {
   const lidarPoints = points.map((point) => {
     let angle = Math.atan2(point.y, point.x) * 180 / Math.PI;
     if (angle > 90) angle -= 180;
@@ -52,6 +53,9 @@ export function LidarPanel({ points, frontDistance }: LidarPanelProps) {
           <Database size={13} /> /scan
         </span>
         <span>实时 WebSocket</span>
+        <span>{lidarHealthLabel(lidar)}</span>
+        <span>{lidar.scan_rate_hz.toFixed(1)} Hz</span>
+        <span>{lidar.scan_age_sec == null ? "--" : `${lidar.scan_age_sec.toFixed(2)} s`}</span>
       </div>
       <svg className="lidar-svg" viewBox="0 0 840 360" role="img" aria-label="半圆激光雷达扫描图">
         <defs>

@@ -1,20 +1,21 @@
-import { Activity, MapPinned, Navigation2, Radar, Target } from "lucide-react";
+import { Activity, Navigation2, Radar, Target } from "lucide-react";
 import { modeDetails, type ModeId } from "../data/consoleData";
 import type { ColorConfig, RobotStatus } from "../robotApi";
 import { ColorConfigPanel } from "./ColorConfigPanel";
 import { ManualControlPanel } from "./ManualControlPanel";
+import { modeUsesManualControl } from "../mappingControl";
 
 type Props = {
   currentMode: ModeId; status: RobotStatus; speed: number;
   onSpeedChange: (speed: number) => void; onCommand: (command: string) => void;
   onColorConfig: (config: ColorConfig) => void;
 };
-const modeIcons: Record<Exclude<ModeId, "manual" | "color_track">, typeof Radar> = {
-  stop: Activity, auto: Radar, mapping: MapPinned, navigation: Navigation2, object_follow: Target
+const modeIcons: Record<Exclude<ModeId, "manual" | "mapping" | "color_track">, typeof Radar> = {
+  stop: Activity, auto: Radar, navigation: Navigation2, object_follow: Target
 };
 
 export function ModeOperationPanel(props: Props) {
-  if (props.currentMode === "manual") return <ManualControlPanel currentMode={props.currentMode} speed={props.speed} onSpeedChange={props.onSpeedChange} onCommand={props.onCommand}/>;
+  if (modeUsesManualControl(props.currentMode)) return <ManualControlPanel currentMode={props.currentMode} speed={props.speed} onSpeedChange={props.onSpeedChange} onCommand={props.onCommand}/>;
   if (props.currentMode === "color_track") return <ColorConfigPanel config={props.status.color_config} target={props.status.color_target} onApply={props.onColorConfig}/>;
   const detail = modeDetails[props.currentMode];
   const Icon = modeIcons[props.currentMode];

@@ -26,6 +26,24 @@ class RobotStateStore:
             "mode": "stop",
             "emergency_stop": False,
             "front_distance": None,
+            "lidar": {
+                "ok": False,
+                "message": "no_data",
+                "scan_age_sec": None,
+                "scan_rate_hz": 0.0,
+                "valid_count": 0,
+                "valid_ratio": 0.0,
+                "frame_id": "",
+            },
+            "map": {
+                "ok": False,
+                "message": "no_map",
+                "map_age_sec": None,
+                "width": 0,
+                "height": 0,
+                "resolution": 0.0,
+                "frame_id": "",
+            },
             "detection": "",
             "color_target": None,
             "tracking_target": {"selection_mode": "auto", "state": "searching", "locked": False, "track_id": None},
@@ -54,7 +72,7 @@ class RobotStateStore:
         return next_mode
 
     def set_command(self, command):
-        if self._state["mode"] != "manual":
+        if self._state["mode"] not in {"manual", "mapping"}:
             self._state["last_command"] = "stop"
             self._touch()
             return "stop"

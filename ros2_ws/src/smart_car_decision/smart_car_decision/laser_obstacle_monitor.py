@@ -5,7 +5,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool
 
-from .common import min_front_range
+from .common import front_range_statistic
 
 
 class LaserObstacleMonitor(Node):
@@ -14,10 +14,16 @@ class LaserObstacleMonitor(Node):
         self.declare_parameter("scan_topic", "/scan")
         self.declare_parameter("obstacle_topic", "/obstacle/front")
         self.declare_parameter("front_angle_deg", 35.0)
+        self.declare_parameter("front_center_deg", 180.0)
+        self.declare_parameter("front_distance_percentile", 20.0)
         self.declare_parameter("obstacle_distance", 0.45)
         self.declare_parameter("publish_rate_hz", 10.0)
 
         self.front_angle = math.radians(self.get_parameter("front_angle_deg").value)
+        self.front_center = math.radians(self.get_parameter("front_center_deg").value)
+        self.front_distance_percentile = float(
+            self.get_parameter("front_distance_percentile").value
+        )
         self.obstacle_distance = float(self.get_parameter("obstacle_distance").value)
         self.front_distance = float("inf")
 
@@ -30,7 +36,12 @@ class LaserObstacleMonitor(Node):
         self.create_timer(1.0 / rate, self.publish_state)
 
     def on_scan(self, scan):
-        self.front_distance = min_front_range(scan, self.front_angle)
+        self.front_distance = front_range_statistic(
+            scan,
+            center_angle_rad=self.front_center,
+            half_width_rad=self.front_angle,
+            percentile=self.front_distance_percentile,
+        )
 
     def publish_state(self):
         msg = Bool()

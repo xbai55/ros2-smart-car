@@ -33,6 +33,7 @@ setup(
             "object_follow_node = smart_car_decision.object_follow_node:main",
             "system_status_node = smart_car_decision.system_status_node:main",
             "web_app_node = smart_car_decision.web_app_node:main",
+            "map_asset = smart_car_decision.map_assets:main",
         ],
     },
 )

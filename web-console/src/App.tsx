@@ -113,7 +113,7 @@ function App() {
               onCommand={(command) => invoke(robot.sendCommand(command))}
               onColorConfig={(config) => invoke(robot.setColorConfig(config))}
             />
-            <LidarPanel points={robot.status.radar_points} frontDistance={robot.status.front_distance} />
+            <LidarPanel points={robot.status.radar_points} frontDistance={robot.status.front_distance} lidar={robot.status.lidar} />
           </div>
         </section>
 

@@ -3,6 +3,7 @@ decision_controller:
     scan_topic: /scan
     detection_topic: /vision/detection
     lane_offset_topic: /lane/offset
+    map_topic: /map
     manual_cmd_topic: /manual_cmd
     cmd_vel_topic: /cmd_vel
     mode_topic: /robot/mode
@@ -29,6 +30,8 @@ laser_obstacle_monitor:
     scan_topic: /scan
     obstacle_topic: /obstacle/front
     front_angle_deg: 35.0
+    front_center_deg: 180.0
+    front_distance_percentile: 20.0
     obstacle_distance: 0.45
     publish_rate_hz: 10.0
 
@@ -118,6 +121,10 @@ system_status_node:
     front_angle_deg: 35.0
     front_center_deg: 180.0
     front_distance_percentile: 20.0
+    scan_timeout_sec: 0.6
+    health_window_size: 20
+    min_valid_ratio: 0.05
+    map_timeout_sec: 5.0
     publish_rate_hz: 2.0
 
 web_app_node:
