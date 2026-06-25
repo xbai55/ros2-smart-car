@@ -14,6 +14,7 @@ export type MapSnapshot = {
   data: number[];
   updated_at: number;
 };
+export type MappingRestartResult = { ok: boolean; pid: number; message: string };
 export type ColorConfig = { name: string; hsv_low: [number, number, number]; hsv_high: [number, number, number] };
 export type ColorTarget = { visible?: boolean; offset?: number; area?: number; raw?: string };
 export type RobotStatus = {
@@ -48,6 +49,7 @@ export function createRobotApi(fetchImpl: FetchLike = fetch) {
   return {
     getStatus: () => fetchImpl("/api/status", { cache: "no-store" }).then((response) => readJson<RobotStatus>(response)),
     getMap: () => fetchImpl("/api/map", { cache: "no-store" }).then((response) => readJson<MapSnapshot>(response)),
+    restartMapping: () => post<MappingRestartResult>("/api/mapping/restart", {}),
     setMode: (mode: string) => post<{ mode: string }>("/api/mode", { mode }),
     sendCommand: (command: string) => post<{ command: string }>("/api/command", { command }),
     setEmergencyStop: (enabled: boolean) => post<{ emergency_stop: boolean }>("/api/emergency-stop", { enabled }),

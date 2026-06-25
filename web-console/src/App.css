@@ -588,6 +588,11 @@ button {
   box-shadow: 0 0 18px rgba(0, 170, 255, 0.24), inset 0 0 16px rgba(0, 142, 255, 0.22);
 }
 
+.focus-actions button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
 .video-frame {
   position: absolute;
   inset: 57px 18px 16px;

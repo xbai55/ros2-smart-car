@@ -3,9 +3,14 @@ import { modeDetails, modeFocusText, modes, type ModeId } from "../data/consoleD
 import type { RobotStatus } from "../robotApi";
 import { HudPanel } from "./HudPanel";
 
-type Props = { currentMode: ModeId; status: RobotStatus };
+type Props = {
+  currentMode: ModeId;
+  status: RobotStatus;
+  restartingMapping?: boolean;
+  onRestartMapping?: () => void;
+};
 
-export function ModeFocusPanel({ currentMode, status }: Props) {
+export function ModeFocusPanel({ currentMode, status, restartingMapping = false, onRestartMapping }: Props) {
   const modeName = modes.find((item) => item.id === currentMode)?.name ?? "停止";
   const detail = modeDetails[currentMode];
   const metrics = [
@@ -20,7 +25,17 @@ export function ModeFocusPanel({ currentMode, status }: Props) {
         <p>{modeFocusText[currentMode]}</p>
         <strong className="focus-headline">{detail.headline}</strong>
         <div className="focus-metrics">{metrics.map((metric)=><span key={metric.label} className={metric.tone}><small>{metric.label}</small><b>{metric.value}</b></span>)}</div>
-        <div className="focus-actions">{detail.actions.map((action,index)=>{const Icon=actionIcons[index]??CheckCircle2;return <span key={action}><Icon size={15}/>{action}</span>;})}</div>
+        <div className="focus-actions">{detail.actions.map((action,index)=>{
+          const Icon=actionIcons[index]??CheckCircle2;
+          if (currentMode === "mapping" && index === 0 && onRestartMapping) {
+            return (
+              <button key={action} type="button" onClick={onRestartMapping} disabled={restartingMapping}>
+                <Icon size={15}/>{restartingMapping ? "重启中" : "重启建图"}
+              </button>
+            );
+          }
+          return <span key={action}><Icon size={15}/>{action}</span>;
+        })}</div>
       </div>
       <div className="target-hud" aria-hidden="true"><span/><i/><b>{modeName}</b></div>
     </HudPanel>

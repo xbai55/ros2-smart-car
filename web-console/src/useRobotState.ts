@@ -52,6 +52,12 @@ export function useRobotState() {
     sendCommand: (command: string) => run(() => api.sendCommand(command), (v) => setStatus((s) => ({ ...s, last_command: v.command }))),
     setEmergencyStop: (enabled: boolean) => run(() => api.setEmergencyStop(enabled), (v) => setStatus((s) => ({ ...s, emergency_stop: v.emergency_stop, mode: v.emergency_stop ? "stop" : s.mode }))),
     setSpeed: (scale: number) => run(() => api.setSpeed(scale), (v) => setStatus((s) => ({ ...s, speed_scale: v.speed_scale }))),
+    restartMapping: () => run(() => api.restartMapping(), () => setStatus((s) => ({
+      ...s,
+      mode: "mapping",
+      last_command: "stop",
+      map: { ok: false, message: "restarting", map_age_sec: null, width: 0, height: 0, resolution: 0, frame_id: "" }
+    }))),
     setColorConfig: (config: ColorConfig) => run(() => api.setColorConfig(config), (v) => {
       saveColor(window.localStorage, v.color_config);
       setStatus((s) => ({ ...s, color_config: v.color_config }));

@@ -22,6 +22,7 @@ function App() {
   const [jsonExpanded, setJsonExpanded] = useState(false);
   const [videoRevision, setVideoRevision] = useState(0);
   const [videoState, setVideoState] = useState<VideoState>("loading");
+  const [mappingRestarting, setMappingRestarting] = useState(false);
   const currentMode: ModeId = isModeId(robot.status.mode) ? robot.status.mode : "stop";
   const currentModeInfo = modes.find((mode) => mode.id === currentMode) ?? modes[0];
   const speed = Math.round(robot.status.speed_scale * 100);
@@ -57,6 +58,12 @@ function App() {
   }), [robot.status.color_target, robot.status.detection, robot.status.last_command]);
 
   const invoke = (promise: Promise<unknown>) => { void promise.catch(() => undefined); };
+  const restartMapping = () => {
+    setMappingRestarting(true);
+    void robot.restartMapping().finally(() => {
+      window.setTimeout(() => setMappingRestarting(false), 1200);
+    });
+  };
 
   return (
     <div className="app-shell">
@@ -105,7 +112,12 @@ function App() {
           </div>
 
           <div className="right-column">
-            <ModeFocusPanel currentMode={currentMode} status={robot.status} />
+            <ModeFocusPanel
+              currentMode={currentMode}
+              status={robot.status}
+              restartingMapping={mappingRestarting}
+              onRestartMapping={restartMapping}
+            />
             <ModeOperationPanel
               currentMode={currentMode}
               status={robot.status}

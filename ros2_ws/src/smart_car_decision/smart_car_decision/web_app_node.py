@@ -1,5 +1,7 @@
 import asyncio
 import json
+import os
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -39,6 +41,7 @@ class WebAppNode(Node):
         self.store = RobotStateStore()
         self.annotated_frames = AnnotatedFrameStore(max_age_sec=1.5)
         self.map_snapshot = MapSnapshotStore()
+        self.mapping_restart = MappingRestartManager(self.get_logger(), self.map_snapshot)
         self.camera_stream = None
         self.mode_pub = self.create_publisher(String, self.get_parameter("mode_set_topic").value, 10)
         self.cmd_pub = self.create_publisher(String, self.get_parameter("manual_cmd_topic").value, 10)
@@ -193,6 +196,15 @@ class WebAppNode(Node):
                 raise HTTPException(status_code=404, detail="map is not available")
             return snapshot
 
+        @app.post("/api/mapping/restart")
+        def restart_mapping():
+            node.set_command("stop")
+            node.set_mode("mapping")
+            try:
+                return node.mapping_restart.restart()
+            except RuntimeError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+
         @app.post("/api/mode")
         def mode(payload: ModePayload):
             return {"mode": node.set_mode(payload.mode)}
@@ -328,6 +340,83 @@ class MapSnapshotStore:
     def snapshot(self):
         with self._lock:
             return None if self._snapshot is None else dict(self._snapshot)
+
+    def clear(self):
+        with self._lock:
+            self._snapshot = None
+
+
+class MappingRestartManager:
+    def __init__(self, logger, map_snapshot):
+        self._logger = logger
+        self._map_snapshot = map_snapshot
+        self._lock = threading.Lock()
+        self._process = None
+
+    def restart(self):
+        with self._lock:
+            self._stop_existing_slam()
+            self._map_snapshot.clear()
+            process = self._start_slam()
+            self._process = process
+            return {
+                "ok": True,
+                "pid": process.pid,
+                "message": "slam_toolbox restarted",
+            }
+
+    def _stop_existing_slam(self):
+        if self._process is not None and self._process.poll() is None:
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+                self._process.wait(timeout=3)
+        self._process = None
+
+        # Clear externally launched slam_toolbox instances without touching web/base/lidar nodes.
+        subprocess.run(
+            ["pkill", "-f", "slam_toolbox/async_slam_toolbox_node"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        subprocess.run(
+            ["pkill", "-f", "slam_toolbox/sync_slam_toolbox_node"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        time.sleep(1.0)
+
+    def _start_slam(self):
+        package_share = Path(get_package_share_directory("smart_car_decision"))
+        params_file = package_share / "config" / "slam_toolbox.yaml"
+        log_file = Path("/tmp/smart_car_slam_restart.log")
+        try:
+            log_handle = log_file.open("ab", buffering=0)
+        except OSError as exc:
+            raise RuntimeError(f"cannot open slam restart log: {exc}") from exc
+
+        command = [
+            "ros2",
+            "launch",
+            "slam_toolbox",
+            "online_async_launch.py",
+            f"slam_params_file:={params_file}",
+            "use_sim_time:=false",
+        ]
+        env = os.environ.copy()
+        process = subprocess.Popen(
+            command,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            env=env,
+            start_new_session=True,
+        )
+        self._logger.info(f"Restarted slam_toolbox via web API, pid={process.pid}")
+        return process
 
 
 def _yaw_from_quaternion(quaternion):

@@ -48,3 +48,21 @@ test("robot API fetches latest occupancy grid map", async () => {
   assert.equal(map.header.frame_id, "map");
   assert.deepEqual(map.data, [-1, 0, 50, 100]);
 });
+
+test("robot API requests mapping restart", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const api = createRobotApi(async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({ ok: true, pid: 1234, message: "slam_toolbox restarted" }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  });
+
+  const result = await api.restartMapping();
+
+  assert.equal(calls[0].url, "/api/mapping/restart");
+  assert.equal(calls[0].init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {});
+  assert.equal(result.pid, 1234);
+});
