@@ -8,6 +8,12 @@ export type MapHealth = {
   ok: boolean; message: string; map_age_sec: number | null; width: number;
   height: number; resolution: number; frame_id: string;
 };
+export type MapSnapshot = {
+  header: { frame_id: string; stamp: { sec: number; nanosec: number } };
+  info: { width: number; height: number; resolution: number; origin: { x: number; y: number; yaw: number } };
+  data: number[];
+  updated_at: number;
+};
 export type ColorConfig = { name: string; hsv_low: [number, number, number]; hsv_high: [number, number, number] };
 export type ColorTarget = { visible?: boolean; offset?: number; area?: number; raw?: string };
 export type RobotStatus = {
@@ -41,6 +47,7 @@ export function createRobotApi(fetchImpl: FetchLike = fetch) {
   }).then((response) => readJson<T>(response));
   return {
     getStatus: () => fetchImpl("/api/status", { cache: "no-store" }).then((response) => readJson<RobotStatus>(response)),
+    getMap: () => fetchImpl("/api/map", { cache: "no-store" }).then((response) => readJson<MapSnapshot>(response)),
     setMode: (mode: string) => post<{ mode: string }>("/api/mode", { mode }),
     sendCommand: (command: string) => post<{ command: string }>("/api/command", { command }),
     setEmergencyStop: (enabled: boolean) => post<{ emergency_stop: boolean }>("/api/emergency-stop", { enabled }),

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { HeaderBar } from "./components/HeaderBar";
 import { LidarPanel } from "./components/LidarPanel";
 import { LiveCameraPanel, type VideoState } from "./components/LiveCameraPanel";
+import { MapPanel } from "./components/MapPanel";
 import { ModeFocusPanel } from "./components/ModeFocusPanel";
 import { ModeOperationPanel } from "./components/ModeOperationPanel";
 import { PerceptionHealthPanel } from "./components/PerceptionHealthPanel";
@@ -113,6 +114,7 @@ function App() {
               onCommand={(command) => invoke(robot.sendCommand(command))}
               onColorConfig={(config) => invoke(robot.setColorConfig(config))}
             />
+            <MapPanel map={robot.status.map} active={currentMode === "mapping"} />
             <LidarPanel points={robot.status.radar_points} frontDistance={robot.status.front_distance} lidar={robot.status.lidar} />
           </div>
         </section>

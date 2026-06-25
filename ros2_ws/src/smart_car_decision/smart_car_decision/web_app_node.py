@@ -6,6 +6,7 @@ from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 import rclpy
+from nav_msgs.msg import OccupancyGrid
 from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import Bool, Float32, String
@@ -37,6 +38,7 @@ class WebAppNode(Node):
 
         self.store = RobotStateStore()
         self.annotated_frames = AnnotatedFrameStore(max_age_sec=1.5)
+        self.map_snapshot = MapSnapshotStore()
         self.camera_stream = None
         self.mode_pub = self.create_publisher(String, self.get_parameter("mode_set_topic").value, 10)
         self.cmd_pub = self.create_publisher(String, self.get_parameter("manual_cmd_topic").value, 10)
@@ -45,6 +47,7 @@ class WebAppNode(Node):
         self.color_config_pub = self.create_publisher(String, self.get_parameter("color_config_topic").value, 10)
         self.tracking_target_pub = self.create_publisher(String, self.get_parameter("tracking_target_set_topic").value, 10)
         self.create_subscription(String, self.get_parameter("status_topic").value, self.on_status, 10)
+        self.create_subscription(OccupancyGrid, "/map", self.on_map, 1)
         self.create_subscription(
             CompressedImage,
             self.get_parameter("annotated_frame_topic").value,
@@ -67,6 +70,9 @@ class WebAppNode(Node):
 
     def on_annotated_frame(self, msg):
         self.annotated_frames.update(bytes(msg.data))
+
+    def on_map(self, msg):
+        self.map_snapshot.update(msg)
 
     def set_mode(self, mode):
         mode = self.store.set_mode(mode)
@@ -180,6 +186,13 @@ class WebAppNode(Node):
         def status():
             return node.store.snapshot()
 
+        @app.get("/api/map")
+        def map_snapshot():
+            snapshot = node.map_snapshot.snapshot()
+            if snapshot is None:
+                raise HTTPException(status_code=404, detail="map is not available")
+            return snapshot
+
         @app.post("/api/mode")
         def mode(payload: ModePayload):
             return {"mode": node.set_mode(payload.mode)}
@@ -280,6 +293,49 @@ class AnnotatedFrameStream:
                     + frame
                     + b"\r\n"
                 )
+
+
+class MapSnapshotStore:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._snapshot = None
+
+    def update(self, msg):
+        data = list(msg.data)
+        with self._lock:
+            self._snapshot = {
+                "header": {
+                    "frame_id": str(msg.header.frame_id),
+                    "stamp": {
+                        "sec": int(msg.header.stamp.sec),
+                        "nanosec": int(msg.header.stamp.nanosec),
+                    },
+                },
+                "info": {
+                    "width": int(msg.info.width),
+                    "height": int(msg.info.height),
+                    "resolution": float(msg.info.resolution),
+                    "origin": {
+                        "x": float(msg.info.origin.position.x),
+                        "y": float(msg.info.origin.position.y),
+                        "yaw": _yaw_from_quaternion(msg.info.origin.orientation),
+                    },
+                },
+                "data": data,
+                "updated_at": time.time(),
+            }
+
+    def snapshot(self):
+        with self._lock:
+            return None if self._snapshot is None else dict(self._snapshot)
+
+
+def _yaw_from_quaternion(quaternion):
+    siny_cosp = 2.0 * (quaternion.w * quaternion.z + quaternion.x * quaternion.y)
+    cosy_cosp = 1.0 - 2.0 * (quaternion.y * quaternion.y + quaternion.z * quaternion.z)
+    import math
+
+    return math.atan2(siny_cosp, cosy_cosp)
 
 
 def main():

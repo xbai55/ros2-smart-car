@@ -15,9 +15,12 @@ def test_mapping_runtime_dependencies_are_declared():
     assert {
         "nav_msgs",
         "tf2_ros",
+        "robot_state_publisher",
         "slam_toolbox",
         "nav2_map_server",
         "nav2_lifecycle_manager",
+        "yahboomcar_base_node",
+        "yahboomcar_description",
     } <= dependencies
 
 
@@ -44,3 +47,13 @@ def test_mapping_launch_reuses_bringup_and_starts_slam_toolbox():
     assert "publish_laser_tf" in source
     assert "static_transform_publisher" in source
 
+
+def test_bringup_launch_starts_vendor_odom_and_scan_tf_chain():
+    source = (PACKAGE / "launch/bringup_all.launch.py").read_text(encoding="utf-8")
+
+    assert "base_node_X3" in source
+    assert "odom_raw" in source
+    assert "robot_state_publisher" in source
+    assert "yahboomcar_X3.urdf" in source
+    assert "base_to_scan_laser_static_tf" in source
+    assert "--child-frame-id\", \"laser" in source

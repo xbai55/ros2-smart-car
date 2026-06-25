@@ -27,3 +27,24 @@ test("status websocket follows the page protocol and host", () => {
   assert.equal(statusSocketUrl({ protocol: "https:", host: "car.example" }), "wss://car.example/ws/status");
 });
 
+test("robot API fetches latest occupancy grid map", async () => {
+  const calls: string[] = [];
+  const api = createRobotApi(async (url) => {
+    calls.push(String(url));
+    return new Response(JSON.stringify({
+      header: { frame_id: "map", stamp: { sec: 1, nanosec: 2 } },
+      info: { width: 2, height: 2, resolution: 0.05, origin: { x: 0, y: 0, yaw: 0 } },
+      data: [-1, 0, 50, 100],
+      updated_at: 1
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  });
+
+  const map = await api.getMap();
+
+  assert.deepEqual(calls, ["/api/map"]);
+  assert.equal(map.header.frame_id, "map");
+  assert.deepEqual(map.data, [-1, 0, 50, 100]);
+});
