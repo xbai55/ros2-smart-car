@@ -38,11 +38,20 @@ class Yolo11CameraNode(Node):
         self.model = YOLO(self.model_path)
         self.publisher = self.create_publisher(String, self.detection_topic, 10)
         self.offset_publisher = self.create_publisher(Float32, self.object_offset_topic, 10)
+        self.tracking_status_publisher = self.create_publisher(
+            String, self.tracking_target_topic, 10
+        )
         self.annotated_frame_publisher = self.create_publisher(
             CompressedImage, self.annotated_frame_topic, 2
         )
         self.mode = "stop"
         self.create_subscription(String, self.mode_topic, self.on_mode, 10)
+        self.create_subscription(
+            String,
+            self.tracking_target_set_topic,
+            self.on_tracking_target_set,
+            10,
+        )
 
         self.camera = None
         self.command_filter = YoloCommandFilter(
@@ -70,9 +79,13 @@ class Yolo11CameraNode(Node):
         self.declare_parameter("device", "0")
         self.declare_parameter("imgsz", 640)
         self.declare_parameter("confidence", 0.35)
+        self.declare_parameter("tracking_confidence", 0.1)
+        self.declare_parameter("tracker_config", "bytetrack.yaml")
         self.declare_parameter("inference_rate_hz", 10.0)
         self.declare_parameter("detection_topic", "/vision/detection")
         self.declare_parameter("object_offset_topic", "/vision/object_offset")
+        self.declare_parameter("tracking_target_topic", "/vision/tracking_target")
+        self.declare_parameter("tracking_target_set_topic", "/vision/tracking_target/set")
         self.declare_parameter("annotated_frame_topic", "/vision/annotated_frame")
         self.declare_parameter("annotated_jpeg_quality", 72)
         self.declare_parameter("camera_buffer_size", 1)
@@ -111,9 +124,17 @@ class Yolo11CameraNode(Node):
         self.device = str(self.get_parameter("device").value)
         self.imgsz = int(self.get_parameter("imgsz").value)
         self.confidence = float(self.get_parameter("confidence").value)
+        self.tracking_confidence = float(self.get_parameter("tracking_confidence").value)
+        self.tracker_config = self._resolve_config_path(
+            str(self.get_parameter("tracker_config").value)
+        )
         self.inference_rate_hz = float(self.get_parameter("inference_rate_hz").value)
         self.detection_topic = str(self.get_parameter("detection_topic").value)
         self.object_offset_topic = str(self.get_parameter("object_offset_topic").value)
+        self.tracking_target_topic = str(self.get_parameter("tracking_target_topic").value)
+        self.tracking_target_set_topic = str(
+            self.get_parameter("tracking_target_set_topic").value
+        )
         self.annotated_frame_topic = str(self.get_parameter("annotated_frame_topic").value)
         self.annotated_jpeg_quality = max(
             30,
@@ -159,14 +180,50 @@ class Yolo11CameraNode(Node):
             return str(package_model)
         return model_path
 
+    @staticmethod
+    def _resolve_config_path(config_path):
+        path = Path(config_path).expanduser()
+        if path.is_absolute() or path.exists():
+            return str(path)
+        package_config = (
+            Path(get_package_share_directory("smart_car_decision"))
+            / "config"
+            / config_path
+        )
+        return str(package_config) if package_config.exists() else config_path
+
     def on_mode(self, msg):
         next_mode = normalize_mode(msg.data)
         if self.mode == next_mode:
             return
+        previous_mode = self.mode
         self.mode = next_mode
+        tracking_reset = False
+        if previous_mode == "object_follow" and self.mode != "object_follow":
+            self.person_selector.reset()
+            tracking_reset = True
+        if self.mode != "object_follow":
+            self._reset_tracker()
         if not self._is_active_mode():
             self._close_camera()
             self.person_selector.reset()
+            tracking_reset = True
+        if tracking_reset:
+            self._publish_tracking_status(time.monotonic())
+
+    def on_tracking_target_set(self, msg):
+        try:
+            payload = json.loads(msg.data)
+            action = str(payload.get("action", "")).strip().lower()
+            if action == "auto":
+                self.person_selector.select_auto()
+            elif action == "select":
+                self.person_selector.select_point(payload["x"], payload["y"])
+            else:
+                raise ValueError("unknown tracking target action")
+            self._publish_tracking_status(time.monotonic())
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            self.get_logger().warning(f"Ignored invalid tracking target request: {exc}")
 
     def _is_active_mode(self):
         return self.mode in self.active_modes
@@ -188,19 +245,31 @@ class Yolo11CameraNode(Node):
             self._try_reopen_camera()
             return
 
-        results = self.model.predict(
-            source=frame,
-            imgsz=self.imgsz,
-            conf=self.confidence,
-            device=self.device,
-            verbose=False,
-        )
         if self.mode == "object_follow":
+            results = self.model.track(
+                source=frame,
+                imgsz=self.imgsz,
+                conf=self.tracking_confidence,
+                device=self.device,
+                tracker=self.tracker_config,
+                persist=True,
+                verbose=False,
+            )
             command, offset = self._choose_person_follow(frame, results[0])
         else:
+            results = self.model.predict(
+                source=frame,
+                imgsz=self.imgsz,
+                conf=self.confidence,
+                device=self.device,
+                verbose=False,
+            )
             command, offset = self._choose_command(frame, results[0])
         command = self.command_filter.update(command, now=time.monotonic())
-        self._publish_annotated_frame(results[0])
+        tracking_status = self.person_selector.status(now=time.monotonic())
+        self._publish_annotated_frame(results[0], tracking_status)
+        if self.mode == "object_follow":
+            self._publish_tracking_status(time.monotonic())
         self._publish_command(command)
         if offset is not None:
             msg = Float32()
@@ -226,11 +295,13 @@ class Yolo11CameraNode(Node):
                         "class_name": class_name,
                         "confidence": float(box.conf[0]),
                         "xyxy": tuple(float(value) for value in box.xyxy[0].tolist()),
+                        "track_id": None if box.id is None else int(box.id[0]),
                     }
                 )
         selected = self.person_selector.update(
             candidates,
             frame_width=max(1, frame.shape[1]),
+            frame_height=max(1, frame.shape[0]),
             now=time.monotonic(),
         )
         if selected is None:
@@ -346,6 +417,11 @@ class Yolo11CameraNode(Node):
             self.camera.release()
             self.camera = None
 
+    def _reset_tracker(self):
+        predictor = getattr(self.model, "predictor", None)
+        for tracker in getattr(predictor, "trackers", ()):
+            tracker.reset()
+
     def _publish_command(self, command):
         now = time.monotonic()
         if now - self.last_publish_time < self.publish_every_sec:
@@ -355,8 +431,25 @@ class Yolo11CameraNode(Node):
         self.publisher.publish(msg)
         self.last_publish_time = now
 
-    def _publish_annotated_frame(self, result):
+    def _publish_tracking_status(self, now):
+        msg = String()
+        msg.data = json.dumps(self.person_selector.status(now=now), ensure_ascii=False)
+        self.tracking_status_publisher.publish(msg)
+
+    def _publish_annotated_frame(self, result, tracking_status=None):
         annotated = result.plot()
+        if tracking_status and tracking_status.get("locked") and self.person_selector.locked_box:
+            x1, y1, x2, y2 = (int(value) for value in self.person_selector.locked_box)
+            self.cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 255), 4)
+            self.cv2.putText(
+                annotated,
+                f"LOCKED ID {tracking_status.get('track_id')}",
+                (x1, max(28, y1 - 10)),
+                self.cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 255, 255),
+                2,
+            )
         ok, encoded = self.cv2.imencode(
             ".jpg",
             annotated,

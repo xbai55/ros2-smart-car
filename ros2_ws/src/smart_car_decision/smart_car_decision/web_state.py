@@ -7,6 +7,19 @@ from .color_config import DEFAULT_COLOR_CONFIG, normalize_color_config
 MIN_SPEED_SCALE = 0.15
 
 
+def normalize_tracking_target_request(payload):
+    action = str(payload.get("action", "")).strip().lower()
+    if action == "auto":
+        return {"action": "auto"}
+    if action != "select":
+        raise ValueError("tracking target action must be 'auto' or 'select'")
+    x = float(payload.get("x"))
+    y = float(payload.get("y"))
+    if not 0.0 <= x <= 1.0 or not 0.0 <= y <= 1.0:
+        raise ValueError("tracking target coordinates must be normalized to [0, 1]")
+    return {"action": "select", "x": x, "y": y}
+
+
 class RobotStateStore:
     def __init__(self):
         self._state = {
@@ -15,6 +28,7 @@ class RobotStateStore:
             "front_distance": None,
             "detection": "",
             "color_target": None,
+            "tracking_target": {"selection_mode": "auto", "state": "searching", "locked": False, "track_id": None},
             "camera": {"ok": False, "message": "not started"},
             "nodes": {},
             "last_command": "stop",

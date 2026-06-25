@@ -363,6 +363,37 @@ h3 {
   object-fit: cover;
 }
 
+body[data-mode="object_follow"] #videoFeed {
+  cursor: crosshair;
+}
+
+.target-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.target-toolbar div {
+  display: grid;
+  gap: 2px;
+}
+
+.target-toolbar span,
+.target-toolbar small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.target-toolbar small {
+  margin-left: auto;
+  text-align: right;
+}
+
 #videoFeed.is-broken {
   opacity: 0;
 }

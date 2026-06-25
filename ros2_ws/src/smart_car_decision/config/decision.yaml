@@ -48,9 +48,13 @@ yolo11_camera_node:
     device: "0"
     imgsz: 640
     confidence: 0.35
+    tracking_confidence: 0.1
+    tracker_config: bytetrack.yaml
     inference_rate_hz: 10.0
     detection_topic: /vision/detection
     object_offset_topic: /vision/object_offset
+    tracking_target_topic: /vision/tracking_target
+    tracking_target_set_topic: /vision/tracking_target/set
     annotated_frame_topic: /vision/annotated_frame
     annotated_jpeg_quality: 72
     camera_buffer_size: 1
@@ -81,7 +85,9 @@ color_tracker_node:
     camera_source: "0"
     mode_topic: /robot/mode
     color_target_topic: /vision/color_target
+    tracking_target_topic: /vision/tracking_target
     color_config_topic: /vision/color_config
+    tracking_target_set_topic: /vision/tracking_target/set
     lane_offset_topic: /lane/offset
     annotated_frame_topic: /vision/annotated_frame
     annotated_jpeg_quality: 72

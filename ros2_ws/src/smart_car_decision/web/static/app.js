@@ -160,6 +160,14 @@ document.querySelector("#saveSpeedBtn").addEventListener("click", () => {
 
 document.querySelector("#applyColorBtn").addEventListener("click", applyColorConfig);
 document.querySelector("#reloadVideoBtn").addEventListener("click", reloadVideo);
+document.querySelector("#autoTargetBtn").addEventListener("click", async () => {
+  try {
+    await postJson("/api/tracking-target", { action: "auto" });
+    setFeedback("已切换为自动选择人物。", "ok");
+  } catch (error) {
+    setFeedback(error.message, "error");
+  }
+});
 document.querySelectorAll("#colorPanel input").forEach((input) => {
   input.addEventListener("input", () => {
     state.colorConfigDirty = true;
@@ -168,6 +176,18 @@ document.querySelectorAll("#colorPanel input").forEach((input) => {
   });
 });
 videoFeed.addEventListener("load", () => setVideoMessage("", true));
+videoFeed.addEventListener("click", async (event) => {
+  if (state.lastMode !== "object_follow") {
+    return;
+  }
+  const point = imageClickPoint(event, videoFeed);
+  try {
+    await postJson("/api/tracking-target", { action: "select", ...point });
+    setFeedback("已发送目标点，请等待 ByteTrack 锁定人物。", "ok");
+  } catch (error) {
+    setFeedback(error.message, "error");
+  }
+});
 videoFeed.addEventListener("error", () => {
   videoFeed.classList.add("is-broken");
   setVideoMessage("摄像头不可用或正在被识别节点占用", false);
@@ -423,6 +443,9 @@ function renderStatus(status) {
     status.lane_offset == null ? "--" : Number(status.lane_offset).toFixed(3);
   document.querySelector("#lastCommand").textContent = status.last_command || "stop";
   document.querySelector("#colorTarget").textContent = formatColorTarget(status.color_target);
+  document.querySelector("#trackingTargetState").textContent = formatTrackingTarget(
+    status.tracking_target,
+  );
   document.querySelector("#cameraState").textContent = formatCamera(status.camera);
   document.querySelector("#rawStatus").textContent = JSON.stringify(status, null, 2);
   document.querySelector("#updatedAt").textContent = formatUpdatedAt(status.updated_at);
@@ -454,6 +477,29 @@ function renderStatus(status) {
   renderModeContext(mode);
   renderNodes(status.nodes || {});
   drawRadar(status.radar_points || []);
+}
+
+function formatTrackingTarget(target) {
+  if (!target) return "自动搜索";
+  if (target.locked) return `已锁定 ID ${target.track_id}`;
+  if (target.selection_mode === "manual" && target.state === "selecting") return "等待点选命中";
+  if (target.selection_mode === "manual") return "目标丢失，等待重选";
+  return "自动搜索";
+}
+
+function imageClickPoint(event, image) {
+  const rect = image.getBoundingClientRect();
+  const naturalWidth = Math.max(1, image.naturalWidth || rect.width);
+  const naturalHeight = Math.max(1, image.naturalHeight || rect.height);
+  const scale = Math.max(rect.width / naturalWidth, rect.height / naturalHeight);
+  const displayedWidth = naturalWidth * scale;
+  const displayedHeight = naturalHeight * scale;
+  const cropX = (displayedWidth - rect.width) / 2;
+  const cropY = (displayedHeight - rect.height) / 2;
+  return {
+    x: Math.max(0, Math.min(1, (event.clientX - rect.left + cropX) / displayedWidth)),
+    y: Math.max(0, Math.min(1, (event.clientY - rect.top + cropY) / displayedHeight)),
+  };
 }
 
 function renderSafety(status) {

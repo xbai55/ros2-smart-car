@@ -13,7 +13,7 @@ from std_msgs.msg import Bool, Float32, String
 from .web_camera import CameraStream
 from .web_static import resolve_static_dir
 from .web_video import AnnotatedFrameStore, should_release_camera_for_mode
-from .web_state import RobotStateStore
+from .web_state import RobotStateStore, normalize_tracking_target_request
 
 
 class WebAppNode(Node):
@@ -27,6 +27,7 @@ class WebAppNode(Node):
         self.declare_parameter("emergency_stop_set_topic", "/robot/emergency_stop/set")
         self.declare_parameter("speed_scale_topic", "/robot/speed_scale")
         self.declare_parameter("color_config_topic", "/vision/color_config")
+        self.declare_parameter("tracking_target_set_topic", "/vision/tracking_target/set")
         self.declare_parameter("annotated_frame_topic", "/vision/annotated_frame")
         self.declare_parameter("camera_source", "0")
         self.declare_parameter("video_fps", 30.0)
@@ -42,6 +43,7 @@ class WebAppNode(Node):
         self.estop_pub = self.create_publisher(Bool, self.get_parameter("emergency_stop_set_topic").value, 10)
         self.speed_pub = self.create_publisher(Float32, self.get_parameter("speed_scale_topic").value, 10)
         self.color_config_pub = self.create_publisher(String, self.get_parameter("color_config_topic").value, 10)
+        self.tracking_target_pub = self.create_publisher(String, self.get_parameter("tracking_target_set_topic").value, 10)
         self.create_subscription(String, self.get_parameter("status_topic").value, self.on_status, 10)
         self.create_subscription(
             CompressedImage,
@@ -107,6 +109,13 @@ class WebAppNode(Node):
         self.color_config_pub.publish(msg)
         return config
 
+    def set_tracking_target(self, payload):
+        request = normalize_tracking_target_request(payload)
+        msg = String()
+        msg.data = json.dumps(request, ensure_ascii=False)
+        self.tracking_target_pub.publish(msg)
+        return request
+
     def _run_server(self):
         try:
             import cv2
@@ -150,6 +159,11 @@ class WebAppNode(Node):
             hsv_low: list[int]
             hsv_high: list[int]
 
+        class TrackingTargetPayload(BaseModel):
+            action: str
+            x: float | None = None
+            y: float | None = None
+
         app = FastAPI(title="ROS2 Smart Car Control")
         package_static_dir = Path(get_package_share_directory("smart_car_decision")) / "web" / "static"
         static_dir = resolve_static_dir(self.get_parameter("static_dir").value, package_static_dir)
@@ -188,6 +202,14 @@ class WebAppNode(Node):
         @app.post("/api/color-target")
         def color_target(payload: ColorConfigPayload):
             return {"color_config": node.set_color_config(payload.dict())}
+
+        @app.post("/api/tracking-target")
+        def tracking_target(payload: TrackingTargetPayload):
+            try:
+                request = node.set_tracking_target(payload.dict(exclude_none=True))
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            return {"tracking_target": request}
 
         @app.get("/video_feed")
         def video_feed():

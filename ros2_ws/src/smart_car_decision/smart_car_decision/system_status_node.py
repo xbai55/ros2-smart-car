@@ -20,6 +20,7 @@ class SystemStatusNode(Node):
         self.declare_parameter("scan_topic", "/scan")
         self.declare_parameter("detection_topic", "/vision/detection")
         self.declare_parameter("color_target_topic", "/vision/color_target")
+        self.declare_parameter("tracking_target_topic", "/vision/tracking_target")
         self.declare_parameter("lane_offset_topic", "/lane/offset")
         self.declare_parameter("front_angle_deg", 35.0)
         self.declare_parameter("front_center_deg", 180.0)
@@ -32,6 +33,7 @@ class SystemStatusNode(Node):
             "front_distance": None,
             "detection": "",
             "color_target": None,
+            "tracking_target": {"selection_mode": "auto", "state": "searching", "locked": False, "track_id": None},
             "lane_offset": 0.0,
             "radar_points": [],
             "speed_scale": 1.0,
@@ -47,6 +49,7 @@ class SystemStatusNode(Node):
         self.create_subscription(LaserScan, self.get_parameter("scan_topic").value, self.on_scan, 10)
         self.create_subscription(String, self.get_parameter("detection_topic").value, self.on_detection, 10)
         self.create_subscription(String, self.get_parameter("color_target_topic").value, self.on_color_target, 10)
+        self.create_subscription(String, self.get_parameter("tracking_target_topic").value, self.on_tracking_target, 10)
         self.create_subscription(Float32, self.get_parameter("lane_offset_topic").value, self.on_lane_offset, 10)
         self.front_angle_rad = float(self.get_parameter("front_angle_deg").value) * 3.1415926 / 180.0
         self.front_center_rad = float(self.get_parameter("front_center_deg").value) * 3.1415926 / 180.0
@@ -92,6 +95,13 @@ class SystemStatusNode(Node):
 
     def on_lane_offset(self, msg):
         self.state["lane_offset"] = round(float(msg.data), 4)
+        self._touch()
+
+    def on_tracking_target(self, msg):
+        try:
+            self.state["tracking_target"] = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
         self._touch()
 
     def publish_status(self):
