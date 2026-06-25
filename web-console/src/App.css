@@ -1247,6 +1247,7 @@ input[type="range"]::-webkit-slider-thumb {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  border-color: rgba(0, 191, 255, 0.58);
 }
 
 .map-ok,
@@ -1268,14 +1269,22 @@ input[type="range"]::-webkit-slider-thumb {
   background: rgba(93, 28, 30, 0.42);
 }
 
-.map-tags {
+.map-control-strip {
   position: relative;
   z-index: 1;
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 10px;
   margin: 0 18px 8px;
+}
+
+.map-tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   overflow: hidden;
+  min-width: 0;
 }
 
 .map-tags span {
@@ -1292,6 +1301,87 @@ input[type="range"]::-webkit-slider-thumb {
   white-space: nowrap;
 }
 
+.map-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.map-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  color: #d8f4ff;
+  border: 1px solid rgba(35, 181, 255, 0.4);
+  border-radius: 6px;
+  background: rgba(3, 28, 58, 0.84);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.map-actions button:hover {
+  border-color: rgba(48, 220, 255, 0.84);
+  box-shadow: 0 0 16px rgba(0, 170, 255, 0.2), inset 0 0 14px rgba(0, 142, 255, 0.18);
+}
+
+.map-actions button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.map-health-strip {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(76px, auto)) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  margin: 0 18px 8px;
+}
+
+.map-health-strip span,
+.map-health-strip b {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  height: 26px;
+  padding: 0 9px;
+  overflow: hidden;
+  border: 1px solid rgba(55, 162, 255, 0.2);
+  border-radius: 5px;
+  background: rgba(1, 18, 39, 0.56);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-health-strip b {
+  justify-content: flex-start;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.map-health-strip .ok,
+.map-health-strip .good {
+  color: var(--green);
+  border-color: rgba(64, 228, 134, 0.24);
+}
+
+.map-health-strip .warn {
+  color: #ffd56c;
+  border-color: rgba(255, 213, 108, 0.3);
+}
+
+.map-health-strip .bad {
+  color: var(--coral);
+  border-color: rgba(255, 119, 104, 0.32);
+}
+
 .map-canvas {
   position: relative;
   z-index: 1;
@@ -1302,12 +1392,12 @@ input[type="range"]::-webkit-slider-thumb {
   min-height: 500px;
   margin: 0 14px 12px;
   overflow: hidden;
-  border: 1px solid rgba(24, 179, 255, 0.34);
+  border: 1px solid rgba(24, 179, 255, 0.52);
   border-radius: 7px;
   background:
-    linear-gradient(rgba(30, 145, 255, 0.07) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(30, 145, 255, 0.07) 1px, transparent 1px),
-    rgba(3, 13, 29, 0.92);
+    linear-gradient(rgba(31, 151, 215, 0.18) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(31, 151, 215, 0.18) 1px, transparent 1px),
+    #020b16;
   background-size: 18px 18px;
 }
 
@@ -1315,6 +1405,16 @@ input[type="range"]::-webkit-slider-thumb {
   width: 100%;
   height: 100%;
   image-rendering: pixelated;
+  shape-rendering: crispEdges;
+  background: #020b16;
+}
+
+.map-enhanced {
+  filter: none;
+}
+
+.map-raw {
+  filter: none;
 }
 
 .map-empty {
@@ -1326,6 +1426,57 @@ input[type="range"]::-webkit-slider-thumb {
 
 .map-empty strong {
   color: var(--text);
+}
+
+.map-legend {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 18px 12px;
+}
+
+.map-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 9px;
+  overflow: hidden;
+  color: var(--muted);
+  border: 1px solid rgba(55, 162, 255, 0.18);
+  border-radius: 5px;
+  background: rgba(1, 18, 39, 0.46);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-legend i {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+}
+
+.legend-free {
+  background: #11344b;
+  border: 1px solid rgba(25, 223, 255, 0.32);
+}
+
+.legend-obstacle {
+  background: #19dfff;
+}
+
+.legend-noise {
+  background: #23556a;
+}
+
+.legend-unknown {
+  background: #071b2f;
+  border: 1px solid rgba(91, 122, 150, 0.34);
 }
 
 .lidar-panel .panel-heading {
@@ -1666,6 +1817,30 @@ input[type="range"]::-webkit-slider-thumb {
 
   .map-canvas {
     min-height: 440px;
+  }
+
+  .map-control-strip {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .map-actions,
+  .map-tags {
+    flex-wrap: wrap;
+  }
+
+  .map-health-strip {
+    grid-template-columns: repeat(4, minmax(64px, auto));
+  }
+
+  .map-health-strip b {
+    grid-column: 1 / -1;
+  }
+
+  .map-legend {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-bottom: 8px;
   }
 
   .operation-body,

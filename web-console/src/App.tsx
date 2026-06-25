@@ -116,7 +116,6 @@ function App() {
               currentMode={currentMode}
               status={robot.status}
               restartingMapping={mappingRestarting}
-              onRestartMapping={restartMapping}
             />
             <ModeOperationPanel
               currentMode={currentMode}
@@ -126,7 +125,14 @@ function App() {
               onCommand={(command) => invoke(robot.sendCommand(command))}
               onColorConfig={(config) => invoke(robot.setColorConfig(config))}
             />
-            <MapPanel map={robot.status.map} active={currentMode === "mapping"} />
+            <MapPanel
+              map={robot.status.map}
+              lidar={robot.status.lidar}
+              active={currentMode === "mapping"}
+              speed={speed}
+              restarting={mappingRestarting}
+              onRestart={restartMapping}
+            />
             <LidarPanel points={robot.status.radar_points} frontDistance={robot.status.front_distance} lidar={robot.status.lidar} />
           </div>
         </section>
