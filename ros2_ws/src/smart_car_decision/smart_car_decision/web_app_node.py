@@ -14,6 +14,8 @@ from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import Bool, Float32, String
 
 from .web_camera import CameraStream
+from .map_assets import save_occupancy_snapshot
+from .pose_debug_log import PoseDebugLog
 from .web_static import resolve_static_dir
 from .web_video import AnnotatedFrameStore, should_release_camera_for_mode
 from .web_state import RobotStateStore, normalize_tracking_target_request
@@ -41,6 +43,7 @@ class WebAppNode(Node):
         self.store = RobotStateStore()
         self.annotated_frames = AnnotatedFrameStore(max_age_sec=1.5)
         self.map_snapshot = MapSnapshotStore()
+        self.pose_debug_log = PoseDebugLog()
         self.mapping_restart = MappingRestartManager(self.get_logger(), self.map_snapshot)
         self.camera_stream = None
         self.mode_pub = self.create_publisher(String, self.get_parameter("mode_set_topic").value, 10)
@@ -69,7 +72,8 @@ class WebAppNode(Node):
             data = json.loads(msg.data)
         except json.JSONDecodeError:
             return
-        self.store.update(**data)
+        snapshot = self.store.update(**data)
+        self.pose_debug_log.append_status(snapshot)
 
     def on_annotated_frame(self, msg):
         self.annotated_frames.update(bytes(msg.data))
@@ -196,14 +200,41 @@ class WebAppNode(Node):
                 raise HTTPException(status_code=404, detail="map is not available")
             return snapshot
 
+        @app.get("/api/debug/pose-log")
+        def pose_log(limit: int = 600):
+            return node.pose_debug_log.snapshot(limit=limit)
+
+        @app.post("/api/debug/pose-log/clear")
+        def clear_pose_log():
+            node.pose_debug_log.clear()
+            return {"ok": True, "message": "pose debug log cleared"}
+
         @app.post("/api/mapping/restart")
         def restart_mapping():
+            status = node.store.snapshot()
+            blocked = [
+                name
+                for name in ("lidar", "odom", "tf")
+                if not status.get(name, {}).get("ok", False)
+            ]
+            if blocked:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"mapping restart blocked by unhealthy: {','.join(blocked)}",
+                )
             node.set_command("stop")
             node.set_mode("mapping")
             try:
                 return node.mapping_restart.restart()
             except RuntimeError as exc:
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        @app.post("/api/mapping/save")
+        def save_mapping():
+            try:
+                return node.map_snapshot.save()
+            except RuntimeError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
 
         @app.post("/api/mode")
         def mode(payload: ModePayload):
@@ -344,6 +375,14 @@ class MapSnapshotStore:
     def clear(self):
         with self._lock:
             self._snapshot = None
+
+    def save(self, directory="/home/jetson/ros2-smart-car/maps"):
+        with self._lock:
+            snapshot = None if self._snapshot is None else dict(self._snapshot)
+        if snapshot is None:
+            raise RuntimeError("map is not available")
+
+        return save_occupancy_snapshot(snapshot, directory)
 
 
 class MappingRestartManager:

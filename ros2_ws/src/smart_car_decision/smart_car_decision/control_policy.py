@@ -68,7 +68,7 @@ def decide_motion(
         return zero_motion()
     if mode in {"auto", "color_track", "object_follow", "mapping"} and not has_recent_scan:
         return zero_motion()
-    if front_distance <= obstacle_stop_distance:
+    if mode != "mapping" and front_distance <= obstacle_stop_distance:
         return zero_motion()
     if mode == "navigation":
         return zero_motion()

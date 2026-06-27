@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { HeaderBar } from "./components/HeaderBar";
 import { LidarPanel } from "./components/LidarPanel";
 import { LiveCameraPanel, type VideoState } from "./components/LiveCameraPanel";
@@ -23,6 +23,8 @@ function App() {
   const [videoRevision, setVideoRevision] = useState(0);
   const [videoState, setVideoState] = useState<VideoState>("loading");
   const [mappingRestarting, setMappingRestarting] = useState(false);
+  const [mappingSaving, setMappingSaving] = useState(false);
+  const [mappingSavePath, setMappingSavePath] = useState("");
   const currentMode: ModeId = isModeId(robot.status.mode) ? robot.status.mode : "stop";
   const currentModeInfo = modes.find((mode) => mode.id === currentMode) ?? modes[0];
   const speed = Math.round(robot.status.speed_scale * 100);
@@ -58,11 +60,25 @@ function App() {
   }), [robot.status.color_target, robot.status.detection, robot.status.last_command]);
 
   const invoke = (promise: Promise<unknown>) => { void promise.catch(() => undefined); };
+
+  useEffect(() => {
+    if (currentMode === "mapping" && robot.status.speed_scale > 0.25) {
+      void robot.setSpeed(0.25).catch(() => undefined);
+    }
+  }, [currentMode, robot, robot.status.speed_scale]);
+
   const restartMapping = () => {
     setMappingRestarting(true);
     void robot.restartMapping().finally(() => {
       window.setTimeout(() => setMappingRestarting(false), 1200);
     });
+  };
+  const saveMapping = () => {
+    setMappingSaving(true);
+    void robot.saveMapping()
+      .then((result) => setMappingSavePath(result.yaml_path))
+      .catch(() => setMappingSavePath(""))
+      .finally(() => setMappingSaving(false));
   };
 
   return (
@@ -128,10 +144,19 @@ function App() {
             <MapPanel
               map={robot.status.map}
               lidar={robot.status.lidar}
+              odom={robot.status.odom}
+              cmdVel={robot.status.cmd_vel}
+              tf={robot.status.tf}
+              mapPose={robot.status.map_pose}
+              mappingQuality={robot.status.mapping_quality}
+              lastCommand={robot.status.last_command}
               active={currentMode === "mapping"}
               speed={speed}
               restarting={mappingRestarting}
+              saving={mappingSaving}
+              savePath={mappingSavePath}
               onRestart={restartMapping}
+              onSave={saveMapping}
             />
             <LidarPanel points={robot.status.radar_points} frontDistance={robot.status.front_distance} lidar={robot.status.lidar} />
           </div>

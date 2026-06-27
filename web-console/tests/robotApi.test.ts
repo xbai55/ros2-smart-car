@@ -66,3 +66,26 @@ test("robot API requests mapping restart", async () => {
   assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {});
   assert.equal(result.pid, 1234);
 });
+
+test("robot API requests mapping save", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const api = createRobotApi(async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({
+      ok: true,
+      message: "map saved",
+      yaml_path: "/tmp/map.yaml",
+      pgm_path: "/tmp/map.pgm"
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  });
+
+  const result = await api.saveMapping();
+
+  assert.equal(calls[0].url, "/api/mapping/save");
+  assert.equal(calls[0].init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {});
+  assert.equal(result.yaml_path, "/tmp/map.yaml");
+});

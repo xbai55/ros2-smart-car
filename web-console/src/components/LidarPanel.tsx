@@ -22,9 +22,9 @@ function arcPath(radius: number) {
   return `M ${center.x - radius} ${center.y} A ${radius} ${radius} 0 0 1 ${center.x + radius} ${center.y}`;
 }
 
-type LidarPanelProps = { points: RadarPoint[]; frontDistance: number | null; lidar: LidarHealth };
+type LidarPanelProps = { points?: RadarPoint[]; frontDistance: number | null; lidar: LidarHealth };
 
-export function LidarPanel({ points, frontDistance, lidar }: LidarPanelProps) {
+export function LidarPanel({ points = [], frontDistance, lidar }: LidarPanelProps) {
   const lidarPoints = points.map((point) => {
     let angle = Math.atan2(point.y, point.x) * 180 / Math.PI;
     if (angle > 90) angle -= 180;

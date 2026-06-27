@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createRobotApi, initialRobotStatus, statusSocketUrl, type ColorConfig, type ConnectionState, type RobotStatus } from "./robotApi";
+import { createRobotApi, initialRobotStatus, normalizeRobotStatus, statusSocketUrl, type ColorConfig, type ConnectionState, type RobotStatus } from "./robotApi";
 import { loadSavedColor, saveColor } from "./colorPersistence";
 
 export function useRobotState() {
@@ -18,7 +18,7 @@ export function useRobotState() {
         const savedColor = loadSavedColor(window.localStorage);
         if (savedColor) await api.setColorConfig(savedColor);
         const snapshot = await api.getStatus();
-        if (active) { setStatus(snapshot); setError(""); }
+        if (active) { setStatus(normalizeRobotStatus(snapshot)); setError(""); }
       } catch (reason) {
         if (active) setError(reason instanceof Error ? reason.message : "状态接口不可用");
       }
@@ -27,7 +27,7 @@ export function useRobotState() {
       socket.onopen = () => active && setConnection("connected");
       socket.onmessage = (event) => {
         if (!active) return;
-        try { setStatus(JSON.parse(event.data) as RobotStatus); setError(""); }
+        try { setStatus(normalizeRobotStatus(JSON.parse(event.data) as Partial<RobotStatus>)); setError(""); }
         catch { setError("收到无法解析的状态数据"); }
       };
       socket.onerror = () => active && setConnection("disconnected");
@@ -58,6 +58,7 @@ export function useRobotState() {
       last_command: "stop",
       map: { ok: false, message: "restarting", map_age_sec: null, width: 0, height: 0, resolution: 0, frame_id: "" }
     }))),
+    saveMapping: () => run(() => api.saveMapping(), (v) => setError(v.message)),
     setColorConfig: (config: ColorConfig) => run(() => api.setColorConfig(config), (v) => {
       saveColor(window.localStorage, v.color_config);
       setStatus((s) => ({ ...s, color_config: v.color_config }));

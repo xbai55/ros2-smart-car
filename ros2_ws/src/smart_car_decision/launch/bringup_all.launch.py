@@ -49,7 +49,15 @@ def generate_launch_description():
                 condition=IfCondition(LaunchConfiguration("start_base_driver")),
             ),
             ExecuteProcess(
-                cmd=["ros2", "launch", "sllidar_ros2", "sllidar_a2m8_launch.py"],
+                cmd=[
+                    "ros2",
+                    "launch",
+                    "sllidar_ros2",
+                    "sllidar_launch.py",
+                    "serial_port:=/dev/rplidar",
+                    "serial_baudrate:=115200",
+                    "frame_id:=laser",
+                ],
                 name="sllidar_driver",
                 output="screen",
                 emulate_tty=True,

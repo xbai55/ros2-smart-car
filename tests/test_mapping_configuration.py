@@ -35,7 +35,12 @@ def test_slam_toolbox_config_has_required_frames_and_safe_initial_values():
     assert config["scan_topic"] == "/scan"
     assert config["mode"] == "mapping"
     assert 0.0 < config["resolution"] <= 0.1
-    assert config["max_laser_range"] > 0.0
+    assert config["max_laser_range"] == 6.0
+    assert config["map_update_interval"] == 1.0
+    assert config["minimum_travel_distance"] == 0.08
+    assert config["minimum_travel_heading"] == 0.08
+    assert config["loop_match_minimum_response_coarse"] >= 0.45
+    assert config["loop_match_minimum_response_fine"] >= 0.55
 
 
 def test_mapping_launch_reuses_bringup_and_starts_slam_toolbox():
@@ -55,5 +60,7 @@ def test_bringup_launch_starts_vendor_odom_and_scan_tf_chain():
     assert "odom_raw" in source
     assert "robot_state_publisher" in source
     assert "yahboomcar_X3.urdf" in source
+    assert "serial_port:=/dev/rplidar" in source
+    assert "sllidar_a2m8_launch.py" not in source
     assert "base_to_scan_laser_static_tf" in source
     assert "--child-frame-id\", \"laser" in source
