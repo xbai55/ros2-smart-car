@@ -39,6 +39,17 @@ type SmoothOptions = {
   teleportDistanceCells?: number;
 };
 
+export type SlamCorrectionTuning = {
+  alpha: number;
+  attractDistanceCells: number;
+  snapDistanceCells: number;
+  positionAlpha: number;
+  yawAlpha: number;
+};
+
+const LATERAL_COMMANDS = new Set(["left", "right"]);
+const TURN_COMMANDS = new Set(["turn_l", "turn_r", "turn_left", "turn_right"]);
+
 function shortestAngleDiffDeg(from: number, to: number) {
   return ((((to - from) % 360) + 540) % 360) - 180;
 }
@@ -75,6 +86,52 @@ export function isDriveCommand(command: ManualCommand) {
     || command === "turn_r"
     || command === "turn_left"
     || command === "turn_right";
+}
+
+export function isLateralCommand(command: ManualCommand) {
+  return LATERAL_COMMANDS.has(command);
+}
+
+export function scaleCommandProjectionSpeed(command: ManualCommand, speedCellsPerSecond: number) {
+  if (isLateralCommand(command)) return speedCellsPerSecond * 0.45;
+  return speedCellsPerSecond;
+}
+
+export function slamCorrectionTuning(command: ManualCommand, isMoving: boolean): SlamCorrectionTuning {
+  if (!isMoving) {
+    return {
+      alpha: 0.035,
+      attractDistanceCells: 42,
+      snapDistanceCells: 64,
+      positionAlpha: 0.34,
+      yawAlpha: 0.4,
+    };
+  }
+  if (isLateralCommand(command)) {
+    return {
+      alpha: 0.045,
+      attractDistanceCells: 999,
+      snapDistanceCells: 999,
+      positionAlpha: 0.68,
+      yawAlpha: 0.62,
+    };
+  }
+  if (TURN_COMMANDS.has(command)) {
+    return {
+      alpha: 0.026,
+      attractDistanceCells: 999,
+      snapDistanceCells: 999,
+      positionAlpha: 0.78,
+      yawAlpha: 0.66,
+    };
+  }
+  return {
+    alpha: 0.02,
+    attractDistanceCells: 999,
+    snapDistanceCells: 999,
+    positionAlpha: 0.82,
+    yawAlpha: 0.7,
+  };
 }
 
 export function mapPoseToScreenCell(frame: MapFrame, pose: MapPoseLike): DisplayPoseCell {
@@ -129,13 +186,10 @@ export function hasActiveVelocity(velocity: VelocityLike, epsilon = 0.0001) {
 export function shouldApplySlamCorrection(
   slamCorrectionEnabled: boolean,
   slamPoseChanged: boolean,
-  lastCommand: ManualCommand,
-  cmdVel: VelocityStatusLike,
+  _lastCommand: ManualCommand,
+  _cmdVel: VelocityStatusLike,
 ) {
-  return slamCorrectionEnabled
-    && slamPoseChanged
-    && lastCommand === "stop"
-    && !hasActiveVelocity(cmdVel);
+  return slamCorrectionEnabled && slamPoseChanged;
 }
 
 export function projectPoseByVelocity(

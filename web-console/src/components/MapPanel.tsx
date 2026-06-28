@@ -25,7 +25,9 @@ import {
   mapPoseToScreenCell,
   projectPoseByCommand,
   projectPoseByVelocity,
+  scaleCommandProjectionSpeed,
   shouldApplySlamCorrection,
+  slamCorrectionTuning,
   smoothMapPoseCell,
   type DisplayPoseCell,
   type MapFrame,
@@ -214,8 +216,15 @@ export function MapPanel({
       const deadReckonedPose = hasFreshCmdVel
         ? projectPoseByVelocity(currentPose, cmdVel, deltaSeconds, resolution)
         : isDriveCommand(lastCommand)
-          ? projectPoseByCommand(currentPose, lastCommand, deltaSeconds, nominalSpeedCellsPerSecond)
+          ? projectPoseByCommand(
+            currentPose,
+            lastCommand,
+            deltaSeconds,
+            scaleCommandProjectionSpeed(lastCommand, nominalSpeedCellsPerSecond),
+          )
           : currentPose;
+      const isMovingDisplay = hasFreshCmdVel || isDriveCommand(lastCommand);
+      const correctionTuning = slamCorrectionTuning(lastCommand, isMovingDisplay);
       const canApplySlamCorrection = shouldApplySlamCorrection(
         slamCorrectionEnabled,
         slamPoseChangedRef.current,
@@ -223,14 +232,21 @@ export function MapPanel({
         cmdVel,
       );
       const corrected = slamPose
-        ? applySlamCorrection(deadReckonedPose, slamPose, canApplySlamCorrection)
+        ? applySlamCorrection(deadReckonedPose, slamPose, canApplySlamCorrection, {
+          // Correct drift while driving so the marker does not visibly pull back
+          // after the user releases the command.
+          alpha: correctionTuning.alpha,
+          attractDistanceCells: correctionTuning.attractDistanceCells,
+          snapDistanceCells: correctionTuning.snapDistanceCells,
+        })
         : { pose: deadReckonedPose, status: "off" as const };
 
       setSlamCorrectionStatus(slamCorrectionEnabled && !slamPoseChangedRef.current ? "hold" : corrected.status);
       displayPoseRef.current = corrected.pose;
       setDisplayPoseCell((previous) => smoothMapPoseCell(previous, corrected.pose, {
         teleportDistanceCells: 18,
-        positionAlpha: hasFreshCmdVel || isDriveCommand(lastCommand) ? 0.85 : 0.55,
+        positionAlpha: correctionTuning.positionAlpha,
+        yawAlpha: correctionTuning.yawAlpha,
       }));
     }, 50);
     return () => window.clearInterval(timer);

@@ -6,7 +6,9 @@ import {
   mapPoseToScreenCell,
   projectPoseByCommand,
   projectPoseByVelocity,
+  scaleCommandProjectionSpeed,
   shouldApplySlamCorrection,
+  slamCorrectionTuning,
   smoothMapPoseCell,
 } from "../src/mapPoseSmoothing.ts";
 
@@ -75,6 +77,13 @@ test("command projection drives the marker from motion heading, not icon heading
     yawDeg: 180,
     motionYawDeg: 0,
   });
+});
+
+test("lateral command projection is reduced to avoid visible SLAM pullback", () => {
+  assert.equal(scaleCommandProjectionSpeed("left", 10), 4.5);
+  assert.equal(scaleCommandProjectionSpeed("right", 10), 4.5);
+  assert.equal(scaleCommandProjectionSpeed("forward", 10), 10);
+  assert.equal(scaleCommandProjectionSpeed("turn_l", 10), 10);
 });
 
 test("command projection updates yaw for turn commands while preserving the visual heading offset", () => {
@@ -153,14 +162,26 @@ test("slam correction can be disabled, attracted, or snapped", () => {
   });
 });
 
-test("slam correction only applies while stopped with zero cmd_vel", () => {
+test("slam correction applies continuously instead of waiting for stop-only pullback", () => {
   const moving = { ok: true, linear_x: 0.07, linear_y: 0, angular_z: 0 };
   const rotating = { ok: true, linear_x: 0, linear_y: 0, angular_z: 0.25 };
   const stopped = { ok: true, linear_x: 0, linear_y: 0, angular_z: 0 };
 
-  assert.equal(shouldApplySlamCorrection(true, true, "forward", moving), false);
-  assert.equal(shouldApplySlamCorrection(true, true, "turn_l", rotating), false);
+  assert.equal(shouldApplySlamCorrection(true, true, "forward", moving), true);
+  assert.equal(shouldApplySlamCorrection(true, true, "turn_l", rotating), true);
   assert.equal(shouldApplySlamCorrection(true, true, "stop", stopped), true);
   assert.equal(shouldApplySlamCorrection(false, true, "stop", stopped), false);
   assert.equal(shouldApplySlamCorrection(true, false, "stop", stopped), false);
+});
+
+test("lateral commands use stronger in-motion SLAM attraction than forward commands", () => {
+  const lateral = slamCorrectionTuning("left", true);
+  const forward = slamCorrectionTuning("forward", true);
+  const stopped = slamCorrectionTuning("stop", false);
+
+  assert.equal(lateral.alpha, 0.045);
+  assert.ok(lateral.alpha > forward.alpha);
+  assert.ok(lateral.positionAlpha < forward.positionAlpha);
+  assert.equal(lateral.snapDistanceCells, 999);
+  assert.equal(stopped.alpha, 0.035);
 });
