@@ -31,3 +31,22 @@ def test_state_store_records_color_config_snapshot():
 
     assert config["name"] == "red"
     assert store.snapshot()["color_config"] == config
+
+
+def test_color_tracker_publishes_bounding_box_and_uses_faster_default_rate():
+    tracker_source = __import__("pathlib").Path("ros2_ws/src/smart_car_decision/smart_car_decision/color_tracker_node.py").read_text(encoding="utf-8-sig")
+    config_source = __import__("pathlib").Path("ros2_ws/src/smart_car_decision/config/decision.yaml").read_text(encoding="utf-8-sig")
+
+    assert "bounding_box" in tracker_source
+    assert "boundingRect" in tracker_source
+    assert "process_rate_hz: 20.0" in config_source
+
+
+def test_partial_status_does_not_reset_applied_color_config_to_green():
+    store = RobotStateStore()
+    store.set_color_config({"name": "red", "hsv_low": [0, 80, 80], "hsv_high": [12, 255, 255]})
+
+    snapshot = store.update(mode="color_track", color_target={"found": True, "offset": 0.1})
+
+    assert snapshot["color_config"]["name"] == "red"
+    assert snapshot["color_config"]["hsv_low"] == [0, 80, 80]

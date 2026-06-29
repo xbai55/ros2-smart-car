@@ -39,6 +39,14 @@ def clamp(value, low, high):
     return max(low, min(high, value))
 
 
+def _mode_obstacle_stop_distance(mode, default_distance, distances):
+    if distances and mode in distances:
+        return max(0.0, float(distances[mode]))
+    if mode == "mapping":
+        return 0.0
+    return max(0.0, float(default_distance))
+
+
 def decide_motion(
     *,
     mode,
@@ -53,6 +61,7 @@ def decide_motion(
     has_recent_scan=True,
     obstacle_stop_distance=0.45,
     obstacle_slow_distance=0.75,
+    mode_obstacle_stop_distances=None,
     cruise_speed=0.18,
     slow_speed=0.08,
     turn_speed=0.75,
@@ -68,7 +77,8 @@ def decide_motion(
         return zero_motion()
     if mode in {"auto", "color_track", "object_follow", "mapping"} and not has_recent_scan:
         return zero_motion()
-    if mode != "mapping" and front_distance <= obstacle_stop_distance:
+    active_stop_distance = _mode_obstacle_stop_distance(mode, obstacle_stop_distance, mode_obstacle_stop_distances)
+    if active_stop_distance > 0.0 and front_distance <= active_stop_distance:
         return zero_motion()
     if mode == "navigation":
         return zero_motion()

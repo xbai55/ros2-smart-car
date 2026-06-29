@@ -31,6 +31,7 @@ class WebAppNode(Node):
         self.declare_parameter("manual_cmd_topic", "/manual_cmd")
         self.declare_parameter("emergency_stop_set_topic", "/robot/emergency_stop/set")
         self.declare_parameter("speed_scale_topic", "/robot/speed_scale")
+        self.declare_parameter("mode_obstacle_stop_distance_topic", "/robot/mode_obstacle_stop_distances")
         self.declare_parameter("color_config_topic", "/vision/color_config")
         self.declare_parameter("tracking_target_set_topic", "/vision/tracking_target/set")
         self.declare_parameter("annotated_frame_topic", "/vision/annotated_frame")
@@ -50,6 +51,7 @@ class WebAppNode(Node):
         self.cmd_pub = self.create_publisher(String, self.get_parameter("manual_cmd_topic").value, 10)
         self.estop_pub = self.create_publisher(Bool, self.get_parameter("emergency_stop_set_topic").value, 10)
         self.speed_pub = self.create_publisher(Float32, self.get_parameter("speed_scale_topic").value, 10)
+        self.mode_obstacle_stop_distance_pub = self.create_publisher(String, self.get_parameter("mode_obstacle_stop_distance_topic").value, 10)
         self.color_config_pub = self.create_publisher(String, self.get_parameter("color_config_topic").value, 10)
         self.tracking_target_pub = self.create_publisher(String, self.get_parameter("tracking_target_set_topic").value, 10)
         self.create_subscription(String, self.get_parameter("status_topic").value, self.on_status, 10)
@@ -122,6 +124,13 @@ class WebAppNode(Node):
         self.color_config_pub.publish(msg)
         return config
 
+    def set_mode_obstacle_stop_distance(self, mode, distance):
+        distances = self.store.set_mode_obstacle_stop_distance(mode, distance)
+        msg = String()
+        msg.data = json.dumps(distances, ensure_ascii=False)
+        self.mode_obstacle_stop_distance_pub.publish(msg)
+        return distances
+
     def set_tracking_target(self, payload):
         request = normalize_tracking_target_request(payload)
         msg = String()
@@ -171,6 +180,10 @@ class WebAppNode(Node):
             name: str = "custom"
             hsv_low: list[int]
             hsv_high: list[int]
+
+        class ModeObstacleStopPayload(BaseModel):
+            mode: str
+            distance: float
 
         class TrackingTargetPayload(BaseModel):
             action: str
@@ -258,6 +271,10 @@ class WebAppNode(Node):
         @app.post("/api/color-target")
         def color_target(payload: ColorConfigPayload):
             return {"color_config": node.set_color_config(payload.dict())}
+
+        @app.post("/api/mode-obstacle-stop-distance")
+        def mode_obstacle_stop_distance(payload: ModeObstacleStopPayload):
+            return {"mode_obstacle_stop_distances": node.set_mode_obstacle_stop_distance(payload.mode, payload.distance)}
 
         @app.post("/api/tracking-target")
         def tracking_target(payload: TrackingTargetPayload):

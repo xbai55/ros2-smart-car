@@ -52,6 +52,7 @@ export function useRobotState() {
     sendCommand: (command: string) => run(() => api.sendCommand(command), (v) => setStatus((s) => ({ ...s, last_command: v.command }))),
     setEmergencyStop: (enabled: boolean) => run(() => api.setEmergencyStop(enabled), (v) => setStatus((s) => ({ ...s, emergency_stop: v.emergency_stop, mode: v.emergency_stop ? "stop" : s.mode }))),
     setSpeed: (scale: number) => run(() => api.setSpeed(scale), (v) => setStatus((s) => ({ ...s, speed_scale: v.speed_scale }))),
+    setModeObstacleStopDistance: (mode: string, distance: number) => run(() => api.setModeObstacleStopDistance(mode, distance), (v) => setStatus((s) => ({ ...s, mode_obstacle_stop_distances: v.mode_obstacle_stop_distances }))),
     restartMapping: () => run(() => api.restartMapping(), () => setStatus((s) => ({
       ...s,
       mode: "mapping",

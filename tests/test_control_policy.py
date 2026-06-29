@@ -195,6 +195,26 @@ def test_mapping_mode_allows_manual_command_inside_obstacle_stop_distance():
     assert motion["linear_x"] > 0.0
 
 
+
+def test_mode_specific_obstacle_stop_distance_can_stop_mapping():
+    motion = decide_motion(
+        mode="mapping",
+        emergency_stop=False,
+        front_distance=0.55,
+        detection="",
+        manual_command="forward",
+        lane_offset=0.0,
+        has_recent_detection=False,
+        has_recent_manual=True,
+        has_recent_lane=False,
+        has_recent_scan=True,
+        obstacle_stop_distance=0.45,
+        mode_obstacle_stop_distances={"mapping": 0.6},
+        cruise_speed=0.28,
+        speed_scale=0.25,
+    )
+
+    assert motion == {"linear_x": 0.0, "linear_y": 0.0, "angular_z": 0.0}
 def test_mapping_mode_stops_when_scan_or_manual_command_is_stale():
     common = dict(
         mode="mapping",

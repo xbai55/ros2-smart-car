@@ -1998,3 +1998,31 @@ input[type="range"]::-webkit-slider-thumb {
   color: #ff9d9d;
   border-color: rgba(255, 95, 104, 0.35);
 }
+
+.mode-threshold-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 180px) 86px;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(8, 14, 22, 0.72);
+  border-radius: 8px;
+}
+.mode-threshold-control strong,
+.mode-threshold-control span {
+  display: block;
+}
+.mode-threshold-control span {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+.mode-threshold-control input[type="number"] {
+  width: 100%;
+}
+@media (max-width: 720px) {
+  .mode-threshold-control {
+    grid-template-columns: 1fr;
+  }
+}

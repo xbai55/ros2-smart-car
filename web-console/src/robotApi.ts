@@ -35,9 +35,10 @@ export type MapSnapshot = {
 export type MappingRestartResult = { ok: boolean; pid: number; message: string };
 export type MappingSaveResult = { ok: boolean; message: string; yaml_path: string; pgm_path: string };
 export type ColorConfig = { name: string; hsv_low: [number, number, number]; hsv_high: [number, number, number] };
-export type ColorTarget = { visible?: boolean; offset?: number; area?: number; raw?: string };
+export type ColorTarget = { visible?: boolean; found?: boolean; offset?: number; area?: number; bounding_box?: [number, number, number, number] | null; raw?: string };
 export type RobotStatus = {
   mode: string; emergency_stop: boolean; front_distance: number | null; detection: string;
+  mode_obstacle_stop_distances: Record<string, number>;
   color_target: ColorTarget | null; camera: { ok: boolean | null; message: string };
   nodes: Record<string, string>; last_command: string; speed_scale: number;
   color_config: ColorConfig; updated_at: number; lane_offset: number; radar_points: RadarPoint[];
@@ -50,7 +51,9 @@ export type RobotStatus = {
   mapping_quality: MappingQuality;
 };
 export const initialRobotStatus: RobotStatus = {
-  mode: "stop", emergency_stop: false, front_distance: null, detection: "", color_target: null,
+  mode: "stop", emergency_stop: false, front_distance: null, detection: "",
+  mode_obstacle_stop_distances: { stop: 0, manual: 0, auto: 0.45, mapping: 0, navigation: 0.45, color_track: 0.45, object_follow: 0.45 },
+  color_target: null,
   camera: { ok: null, message: "等待视频" }, nodes: {}, last_command: "stop", speed_scale: 1,
   color_config: { name: "green", hsv_low: [35, 60, 60], hsv_high: [90, 255, 255] },
   updated_at: 0, lane_offset: 0, radar_points: [],
@@ -69,6 +72,7 @@ export function normalizeRobotStatus(snapshot: Partial<RobotStatus>): RobotStatu
     ...snapshot,
     camera: { ...initialRobotStatus.camera, ...snapshot.camera },
     color_config: { ...initialRobotStatus.color_config, ...snapshot.color_config },
+    mode_obstacle_stop_distances: { ...initialRobotStatus.mode_obstacle_stop_distances, ...snapshot.mode_obstacle_stop_distances },
     lidar: { ...initialRobotStatus.lidar, ...snapshot.lidar },
     map: { ...initialRobotStatus.map, ...snapshot.map },
     odom: { ...initialRobotStatus.odom, ...snapshot.odom },
@@ -104,6 +108,7 @@ export function createRobotApi(fetchImpl: FetchLike = fetch) {
     sendCommand: (command: string) => post<{ command: string }>("/api/command", { command }),
     setEmergencyStop: (enabled: boolean) => post<{ emergency_stop: boolean }>("/api/emergency-stop", { enabled }),
     setSpeed: (scale: number) => post<{ speed_scale: number }>("/api/speed", { scale }),
+    setModeObstacleStopDistance: (mode: string, distance: number) => post<{ mode_obstacle_stop_distances: Record<string, number> }>("/api/mode-obstacle-stop-distance", { mode, distance }),
     setColorConfig: (config: ColorConfig) => post<{ color_config: ColorConfig }>("/api/color-target", config)
   };
 }

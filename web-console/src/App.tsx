@@ -140,6 +140,7 @@ function App() {
               onSpeedChange={(value) => invoke(robot.setSpeed(value / 100))}
               onCommand={(command) => invoke(robot.sendCommand(command))}
               onColorConfig={(config) => invoke(robot.setColorConfig(config))}
+              onModeObstacleStopDistance={(mode, distance) => invoke(robot.setModeObstacleStopDistance(mode, distance))}
             />
             <MapPanel
               map={robot.status.map}

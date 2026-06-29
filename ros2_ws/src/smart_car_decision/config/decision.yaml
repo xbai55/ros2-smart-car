@@ -9,11 +9,13 @@ decision_controller:
     mode_topic: /robot/mode
     emergency_stop_topic: /robot/emergency_stop
     speed_scale_topic: /robot/speed_scale
+    mode_obstacle_stop_distance_topic: /robot/mode_obstacle_stop_distances
     front_angle_deg: 35.0
     front_center_deg: 180.0
     front_distance_percentile: 20.0
     obstacle_stop_distance: 0.45
     obstacle_slow_distance: 0.75
+    mode_obstacle_stop_distances: {"stop": 0.0, "manual": 0.0, "auto": 0.45, "mapping": 0.0, "navigation": 0.45, "color_track": 0.45, "object_follow": 0.45}
     cruise_speed: 0.28
     slow_speed: 0.12
     turn_speed: 1.0
@@ -95,7 +97,7 @@ color_tracker_node:
     annotated_frame_topic: /vision/annotated_frame
     annotated_jpeg_quality: 72
     camera_buffer_size: 1
-    process_rate_hz: 10.0
+    process_rate_hz: 20.0
     min_area: 500.0
     hsv_low: [35, 60, 60]
     hsv_high: [90, 255, 255]
@@ -140,6 +142,7 @@ web_app_node:
     manual_cmd_topic: /manual_cmd
     emergency_stop_set_topic: /robot/emergency_stop/set
     speed_scale_topic: /robot/speed_scale
+    mode_obstacle_stop_distance_topic: /robot/mode_obstacle_stop_distances
     color_config_topic: /vision/color_config
     annotated_frame_topic: /vision/annotated_frame
     camera_source: "0"

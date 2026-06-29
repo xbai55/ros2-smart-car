@@ -40,7 +40,7 @@ class ColorTrackerNode(Node):
         self.declare_parameter("annotated_frame_topic", "/vision/annotated_frame")
         self.declare_parameter("annotated_jpeg_quality", 72)
         self.declare_parameter("camera_buffer_size", 1)
-        self.declare_parameter("process_rate_hz", 10.0)
+        self.declare_parameter("process_rate_hz", 20.0)
         self.declare_parameter("min_area", 500.0)
         self.declare_parameter("hsv_low", [35, 60, 60])
         self.declare_parameter("hsv_high", [90, 255, 255])
@@ -106,22 +106,31 @@ class ColorTrackerNode(Node):
         mask = self.cv2.inRange(hsv, self.hsv_low, self.hsv_high)
         moments = self.cv2.moments(mask)
         area = float(moments["m00"])
-        if area < self.min_area:
+        bounding_box = self._largest_bounding_box(mask)
+        if area < self.min_area or bounding_box is None:
             self.publish_annotated_frame(frame, None, area)
-            self.publish_target(False, 0.0, area)
+            self.publish_target(False, 0.0, area, None)
             return
 
         cx = moments["m10"] / area
         cy = moments["m01"] / area
         width = max(1, frame.shape[1])
         offset = (cx - width / 2.0) / (width / 2.0)
-        self.publish_annotated_frame(frame, (cx, cy), area)
-        self.publish_target(True, offset, area)
+        self.publish_annotated_frame(frame, (cx, cy), area, bounding_box)
+        self.publish_target(True, offset, area, bounding_box)
         offset_msg = Float32()
         offset_msg.data = float(offset)
         self.offset_pub.publish(offset_msg)
 
-    def publish_target(self, found, offset, area):
+    def _largest_bounding_box(self, mask):
+        contours, _ = self.cv2.findContours(mask, self.cv2.RETR_EXTERNAL, self.cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return None
+        contour = max(contours, key=self.cv2.contourArea)
+        x, y, w, h = self.cv2.boundingRect(contour)
+        return [int(x), int(y), int(w), int(h)]
+
+    def publish_target(self, found, offset, area, bounding_box=None):
         msg = String()
         msg.data = json.dumps(
             {
@@ -130,16 +139,20 @@ class ColorTrackerNode(Node):
                 "area": round(float(area), 2),
                 "hsv_low": list(self.hsv_low),
                 "hsv_high": list(self.hsv_high),
+                "bounding_box": bounding_box,
                 "timestamp": time.time(),
             },
             ensure_ascii=False,
         )
         self.target_pub.publish(msg)
 
-    def publish_annotated_frame(self, frame, center, area):
+    def publish_annotated_frame(self, frame, center, area, bounding_box=None):
         annotated = frame.copy()
         if center is not None:
             cx, cy = (int(center[0]), int(center[1]))
+            if bounding_box is not None:
+                x, y, w, h = bounding_box
+                self.cv2.rectangle(annotated, (x, y), (x + w, y + h), (0, 255, 255), 3)
             self.cv2.circle(annotated, (cx, cy), 18, (0, 255, 255), 3)
             self.cv2.line(annotated, (frame.shape[1] // 2, 0), (frame.shape[1] // 2, frame.shape[0]), (255, 180, 0), 2)
             self.cv2.putText(

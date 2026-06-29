@@ -1,3 +1,4 @@
+import json
 import math
 import time
 
@@ -37,6 +38,7 @@ class DecisionController(Node):
         self.create_subscription(String, self.mode_topic, self.on_mode, 10)
         self.create_subscription(Bool, self.emergency_stop_topic, self.on_emergency_stop, 10)
         self.create_subscription(Float32, self.speed_scale_topic, self.on_speed_scale, 10)
+        self.create_subscription(String, self.mode_obstacle_stop_distance_topic, self.on_mode_obstacle_stop_distances, 10)
         self.create_timer(1.0 / self.publish_rate_hz, self.control_loop)
 
         self.get_logger().info("Decision controller started")
@@ -50,11 +52,13 @@ class DecisionController(Node):
         self.declare_parameter("mode_topic", "/robot/mode")
         self.declare_parameter("emergency_stop_topic", "/robot/emergency_stop")
         self.declare_parameter("speed_scale_topic", "/robot/speed_scale")
+        self.declare_parameter("mode_obstacle_stop_distance_topic", "/robot/mode_obstacle_stop_distances")
         self.declare_parameter("front_angle_deg", 35.0)
         self.declare_parameter("front_center_deg", 180.0)
         self.declare_parameter("front_distance_percentile", 20.0)
         self.declare_parameter("obstacle_stop_distance", 0.45)
         self.declare_parameter("obstacle_slow_distance", 0.75)
+        self.declare_parameter("mode_obstacle_stop_distances", "{}")
         self.declare_parameter("cruise_speed", 0.18)
         self.declare_parameter("slow_speed", 0.08)
         self.declare_parameter("turn_speed", 0.75)
@@ -75,11 +79,15 @@ class DecisionController(Node):
         self.mode_topic = self.get_parameter("mode_topic").value
         self.emergency_stop_topic = self.get_parameter("emergency_stop_topic").value
         self.speed_scale_topic = self.get_parameter("speed_scale_topic").value
+        self.mode_obstacle_stop_distance_topic = self.get_parameter("mode_obstacle_stop_distance_topic").value
         self.front_angle = math.radians(float(self.get_parameter("front_angle_deg").value))
         self.front_center = math.radians(float(self.get_parameter("front_center_deg").value))
         self.front_distance_percentile = float(self.get_parameter("front_distance_percentile").value)
         self.obstacle_stop_distance = float(self.get_parameter("obstacle_stop_distance").value)
         self.obstacle_slow_distance = float(self.get_parameter("obstacle_slow_distance").value)
+        self.mode_obstacle_stop_distances = self._parse_mode_obstacle_stop_distances(
+            self.get_parameter("mode_obstacle_stop_distances").value
+        )
         self.cruise_speed = float(self.get_parameter("cruise_speed").value)
         self.slow_speed = float(self.get_parameter("slow_speed").value)
         self.turn_speed = float(self.get_parameter("turn_speed").value)
@@ -90,6 +98,24 @@ class DecisionController(Node):
         self.lane_timeout_sec = float(self.get_parameter("lane_timeout_sec").value)
         self.scan_timeout_sec = float(self.get_parameter("scan_timeout_sec").value)
         self.publish_rate_hz = float(self.get_parameter("publish_rate_hz").value)
+
+    @staticmethod
+    def _parse_mode_obstacle_stop_distances(value):
+        if isinstance(value, dict):
+            raw = value
+        else:
+            try:
+                raw = json.loads(str(value or "{}"))
+            except json.JSONDecodeError:
+                raw = {}
+        distances = {}
+        for mode, distance in raw.items():
+            normalized = normalize_mode(mode)
+            try:
+                distances[normalized] = max(0.0, float(distance))
+            except (TypeError, ValueError):
+                continue
+        return distances
 
     def on_scan(self, scan):
         self.front_distance = front_range_statistic(
@@ -121,6 +147,9 @@ class DecisionController(Node):
     def on_speed_scale(self, msg):
         self.speed_scale = max(0.0, min(1.0, float(msg.data)))
 
+    def on_mode_obstacle_stop_distances(self, msg):
+        self.mode_obstacle_stop_distances = self._parse_mode_obstacle_stop_distances(msg.data)
+
     def control_loop(self):
         now = time.monotonic()
         twist = Twist()
@@ -137,6 +166,7 @@ class DecisionController(Node):
             has_recent_scan=now - self.last_scan_time <= self.scan_timeout_sec,
             obstacle_stop_distance=self.obstacle_stop_distance,
             obstacle_slow_distance=self.obstacle_slow_distance,
+            mode_obstacle_stop_distances=self.mode_obstacle_stop_distances,
             cruise_speed=self.cruise_speed,
             slow_speed=self.slow_speed,
             turn_speed=self.turn_speed,

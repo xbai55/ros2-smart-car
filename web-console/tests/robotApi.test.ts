@@ -89,3 +89,19 @@ test("robot API requests mapping save", async () => {
   assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {});
   assert.equal(result.yaml_path, "/tmp/map.yaml");
 });
+
+test("robot API posts per-mode obstacle stop distance payloads", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const api = createRobotApi(async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({ mode_obstacle_stop_distances: { mapping: 0.6 } }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  });
+
+  await api.setModeObstacleStopDistance("mapping", 0.6);
+
+  assert.equal(calls[0].url, "/api/mode-obstacle-stop-distance");
+  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), { mode: "mapping", distance: 0.6 });
+});

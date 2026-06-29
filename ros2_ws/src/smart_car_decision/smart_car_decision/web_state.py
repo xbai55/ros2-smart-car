@@ -5,6 +5,23 @@ from .control_policy import normalize_manual_command, normalize_mode
 from .color_config import DEFAULT_COLOR_CONFIG, normalize_color_config
 
 MIN_SPEED_SCALE = 0.15
+DEFAULT_MODE_OBSTACLE_STOP_DISTANCES = {
+    "stop": 0.0,
+    "manual": 0.0,
+    "auto": 0.45,
+    "mapping": 0.0,
+    "navigation": 0.45,
+    "color_track": 0.45,
+    "object_follow": 0.45,
+}
+
+
+def normalize_mode_obstacle_stop_distances(payload):
+    distances = dict(DEFAULT_MODE_OBSTACLE_STOP_DISTANCES)
+    for mode, distance in dict(payload or {}).items():
+        normalized = normalize_mode(mode)
+        distances[normalized] = max(0.0, min(5.0, float(distance)))
+    return distances
 
 
 def normalize_tracking_target_request(payload):
@@ -86,6 +103,7 @@ class RobotStateStore:
             "last_command": "stop",
             "speed_scale": 1.0,
             "color_config": DEFAULT_COLOR_CONFIG,
+            "mode_obstacle_stop_distances": dict(DEFAULT_MODE_OBSTACLE_STOP_DISTANCES),
             "updated_at": time.time(),
         }
 
@@ -134,6 +152,14 @@ class RobotStateStore:
         self._state["color_config"] = config
         self._touch()
         return config
+
+    def set_mode_obstacle_stop_distance(self, mode, distance):
+        normalized = normalize_mode(mode)
+        distances = dict(self._state.get("mode_obstacle_stop_distances", DEFAULT_MODE_OBSTACLE_STOP_DISTANCES))
+        distances[normalized] = max(0.0, min(5.0, float(distance)))
+        self._state["mode_obstacle_stop_distances"] = distances
+        self._touch()
+        return distances
 
     def _touch(self):
         self._state["updated_at"] = time.time()
