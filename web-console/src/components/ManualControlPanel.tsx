@@ -1,8 +1,6 @@
-import { Gauge, Home, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef } from "react";
-import type { CSSProperties, PointerEvent } from "react";
-import { manualCommands, modes, type ModeId } from "../data/consoleData";
-import { HudPanel } from "./HudPanel";
+import type { PointerEvent } from "react";
+import { manualCommands, type ModeId } from "../data/consoleData";
 
 type Props = {
   currentMode: ModeId;
@@ -13,9 +11,7 @@ type Props = {
 
 const HOLD_REPEAT_MS = 180;
 
-export function ManualControlPanel({ currentMode, speed, onSpeedChange, onCommand }: Props) {
-  const modeName = modes.find((mode) => mode.id === currentMode)?.name ?? "停止";
-  const subtitle = currentMode === "mapping" ? "建图安全遥控" : "手动遥控";
+export function ManualControlPanel({ onCommand }: Props) {
   const onCommandRef = useRef(onCommand);
   const activeCommandRef = useRef<string | null>(null);
   const repeatTimerRef = useRef<number | null>(null);
@@ -85,66 +81,40 @@ export function ManualControlPanel({ currentMode, speed, onSpeedChange, onComman
   }, [stopHold]);
 
   return (
-    <HudPanel className="manual-panel" title="Manual Control" subtitle={subtitle} action={<span className="tag-pill">/api/command</span>}>
-      <div className="manual-layout">
-        <div className="drive-pad">
-          {manualCommands.map((command) => {
-            const Icon = command.icon;
-            return (
-              <button
-                key={command.id}
-                type="button"
-                className={`drive-btn ${command.slot} ${command.danger ? "danger" : ""}`}
-                onPointerDown={(event) => handlePointerDown(event, command.id)}
-                onPointerUp={handlePointerUp}
-                onPointerCancel={() => stopHold()}
-                onLostPointerCapture={() => stopHold()}
-                onKeyDown={(event) => {
-                  if ((event.key === "Enter" || event.key === " ") && activeCommandRef.current !== command.id) {
-                    event.preventDefault();
-                    startHold(command.id);
-                  }
-                }}
-                onKeyUp={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    stopHold();
-                  }
-                }}
-                title={command.label}
-                aria-label={command.label}
-              >
-                <Icon size={22} />
-                <span>{command.label}</span>
-              </button>
-            );
-          })}
-        </div>
-        <div className="speed-console">
-          <div className="speed-head">
-            <span>速度比例</span>
-            <strong>{speed}%</strong>
-          </div>
-          <input
-            type="range"
-            min="15"
-            max="100"
-            value={speed}
-            aria-label="速度比例"
-            onChange={(event) => onSpeedChange(Number(event.currentTarget.value))}
-            style={{ "--speed": `${speed}%` } as CSSProperties}
-          />
-          <button className="mini-btn" type="button" onClick={() => onSpeedChange(15)}>
-            <RotateCcw size={14} />
-            设为安全低速
-          </button>
-          <div className="speed-facts">
-            <p><Gauge size={15} />最低速度 <strong>15%</strong></p>
-            <p><Home size={15} />当前模式 <strong>{modeName}</strong></p>
-            <p>命令通过 <strong className="green-text">FastAPI / ROS2</strong></p>
-          </div>
-        </div>
+    <div className="manual-layout">
+      <div className="drive-pad">
+        {manualCommands.map((command) => {
+          const Icon = command.icon;
+          return (
+            <button
+              key={command.id}
+              type="button"
+              className={`drive-btn ${command.slot} ${command.danger ? "danger" : ""}`}
+              onPointerDown={(event) => handlePointerDown(event, command.id)}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={() => stopHold()}
+              onLostPointerCapture={() => stopHold()}
+              onKeyDown={(event) => {
+                if ((event.key === "Enter" || event.key === " ") && activeCommandRef.current !== command.id) {
+                  event.preventDefault();
+                  startHold(command.id);
+                }
+              }}
+              onKeyUp={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  stopHold();
+                }
+              }}
+              title={command.label}
+              aria-label={command.label}
+            >
+              <Icon size={22} />
+              <span>{command.label}</span>
+            </button>
+          );
+        })}
       </div>
-    </HudPanel>
+    </div>
   );
 }

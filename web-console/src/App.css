@@ -489,9 +489,8 @@ button {
   grid-template-columns: minmax(620px, 1fr) minmax(600px, 0.98fr);
   grid-template-areas:
     "camera control"
-    "camera map"
-    "summary map"
-    "lidar map";
+    "lidar map"
+    "summary map";
   grid-auto-rows: auto;
   min-height: auto;
   align-items: stretch;
@@ -2329,5 +2328,148 @@ input[type="range"]::-webkit-slider-thumb {
   .home-metrics,
   .home-route {
     grid-template-columns: 1fr;
+  }
+}
+/* Layout refinement: camera left, manual/control right, lidar directly below camera. */
+.dashboard-grid {
+  grid-template-columns: minmax(620px, 1fr) minmax(600px, 0.98fr);
+  grid-template-areas:
+    "camera control"
+    "lidar map"
+    "summary map";
+}
+
+.live-camera {
+  min-height: 520px;
+}
+
+.mode-operation {
+  min-height: 520px;
+}
+
+.lidar-panel {
+  min-height: 305px;
+}
+
+.system-summary-panel {
+  min-height: 205px;
+}
+
+.mode-control-strip {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 0 18px 12px;
+}
+
+.compact-control-block {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.95fr) minmax(120px, 1fr) 68px;
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+  min-height: 54px;
+  padding: 9px 10px;
+  border: 1px solid rgba(48, 169, 255, 0.24);
+  border-radius: 7px;
+  background: rgba(4, 22, 47, 0.58);
+}
+
+.compact-control-block strong,
+.compact-control-block span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-control-block strong {
+  font-size: 13px;
+}
+
+.compact-control-block span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.compact-control-block input[type="number"],
+.compact-control-block button {
+  width: 100%;
+  height: 30px;
+  color: #effbff;
+  border: 1px solid rgba(48, 169, 255, 0.3);
+  border-radius: 6px;
+  outline: none;
+  background: rgba(2, 16, 35, 0.72);
+  text-align: center;
+}
+
+.compact-control-block button {
+  color: var(--green);
+  font-weight: 800;
+}
+
+.manual-panel .manual-layout {
+  grid-template-columns: 1fr;
+  padding: 4px 18px 18px;
+}
+
+.manual-panel .drive-pad {
+  grid-template-columns: repeat(3, minmax(108px, 1fr));
+  grid-template-rows: repeat(3, minmax(58px, 1fr));
+  gap: 12px;
+  min-height: 330px;
+}
+
+.manual-panel .drive-btn {
+  min-height: 58px;
+  font-size: 16px;
+}
+
+.color-operation-panel .color-config-panel {
+  margin: 0 18px 18px;
+  border-color: rgba(48, 169, 255, 0.22);
+}
+
+@media (max-width: 1700px), (max-height: 950px) {
+  .dashboard-grid {
+    grid-template-columns: minmax(590px, 1fr) minmax(540px, 0.94fr);
+    grid-template-areas:
+      "camera control"
+      "lidar map"
+      "summary map";
+  }
+
+  .live-camera {
+    min-height: 500px;
+  }
+
+  .mode-operation {
+    min-height: 500px;
+  }
+
+  .mode-control-strip {
+    padding: 0 16px 10px;
+  }
+
+  .compact-control-block {
+    grid-template-columns: minmax(98px, 0.85fr) minmax(108px, 1fr) 58px;
+    gap: 7px;
+    min-height: 48px;
+    padding: 7px 8px;
+  }
+
+  .manual-panel .manual-layout {
+    padding: 0 16px 14px;
+  }
+
+  .manual-panel .drive-pad {
+    grid-template-columns: repeat(3, minmax(88px, 1fr));
+    grid-template-rows: repeat(3, minmax(48px, 1fr));
+    min-height: 292px;
+    gap: 9px;
   }
 }
