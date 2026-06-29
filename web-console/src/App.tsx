@@ -1,16 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { HeaderBar } from "./components/HeaderBar";
+import { HomePage } from "./components/HomePage";
 import { LidarPanel } from "./components/LidarPanel";
 import { LiveCameraPanel, type VideoState } from "./components/LiveCameraPanel";
 import { MapPanel } from "./components/MapPanel";
-import { ModeFocusPanel } from "./components/ModeFocusPanel";
 import { ModeOperationPanel } from "./components/ModeOperationPanel";
-import { PerceptionHealthPanel } from "./components/PerceptionHealthPanel";
 import { PreDriveChecklist } from "./components/PreDriveChecklist";
-import { QuickResultCard } from "./components/QuickResultCard";
 import { Sidebar } from "./components/Sidebar";
 import { StatusCard } from "./components/StatusCard";
-import { baseStatusCards, modes, quickResults, type ModeId } from "./data/consoleData";
+import { SystemSummaryPanel } from "./components/SystemSummaryPanel";
+import { baseStatusCards, modes, type ModeId } from "./data/consoleData";
 import { useRobotState } from "./useRobotState";
 
 function isModeId(mode: string): mode is ModeId {
@@ -19,6 +18,7 @@ function isModeId(mode: string): mode is ModeId {
 
 function App() {
   const robot = useRobotState();
+  const [consoleOpen, setConsoleOpen] = useState(false);
   const [jsonExpanded, setJsonExpanded] = useState(false);
   const [videoRevision, setVideoRevision] = useState(0);
   const [videoState, setVideoState] = useState<VideoState>("loading");
@@ -48,17 +48,6 @@ function App() {
     return card;
   }), [colorOffset, currentModeInfo, robot.status.emergency_stop, robot.status.front_distance, robot.status.lane_offset]);
 
-  const quickCards = useMemo(() => quickResults.map((card) => {
-    if (card.key === "command") return { ...card, value: robot.status.last_command || "stop", description: "来自后端状态" };
-    if (card.key === "yolo") return { ...card, value: robot.status.detection || "无目标", description: "/vision/detection" };
-    const target = robot.status.color_target;
-    return {
-      ...card,
-      value: target?.visible ? `visible ${(target.offset ?? 0).toFixed(4)}` : "未检测",
-      description: "/vision/color_target"
-    };
-  }), [robot.status.color_target, robot.status.detection, robot.status.last_command]);
-
   const invoke = (promise: Promise<unknown>) => { void promise.catch(() => undefined); };
 
   useEffect(() => {
@@ -80,6 +69,20 @@ function App() {
       .catch(() => setMappingSavePath(""))
       .finally(() => setMappingSaving(false));
   };
+
+  if (!consoleOpen) {
+    return (
+      <HomePage
+        status={robot.status}
+        connection={robot.connection}
+        currentMode={currentMode}
+        currentModeName={currentModeInfo.name}
+        videoState={videoState}
+        onEnter={() => setConsoleOpen(true)}
+        onEmergency={() => invoke(robot.setEmergencyStop(!robot.status.emergency_stop))}
+      />
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -113,12 +116,7 @@ function App() {
               onStateChange={setVideoState}
               onReconnect={() => { setVideoState("loading"); setVideoRevision((value) => value + 1); }}
             />
-            <div className="quick-grid">
-              {quickCards.map((card) => (
-                <QuickResultCard key={card.key} title={card.title} value={card.value} description={card.description} icon={card.icon} />
-              ))}
-            </div>
-            <PerceptionHealthPanel
+            <SystemSummaryPanel
               expanded={jsonExpanded}
               onToggle={() => setJsonExpanded((value) => !value)}
               status={robot.status}
@@ -128,11 +126,6 @@ function App() {
           </div>
 
           <div className="right-column">
-            <ModeFocusPanel
-              currentMode={currentMode}
-              status={robot.status}
-              restartingMapping={mappingRestarting}
-            />
             <ModeOperationPanel
               currentMode={currentMode}
               status={robot.status}
