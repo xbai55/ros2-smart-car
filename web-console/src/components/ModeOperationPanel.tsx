@@ -20,7 +20,7 @@ function ObstacleStopControl({ mode, value, onChange }: { mode: ModeId; value: n
   const distance = Number.isFinite(value) ? value : 0;
   return (
     <div className="mode-threshold-control">
-      <div><strong>??????</strong><span>{mode} ? {distance.toFixed(2)} m</span></div>
+      <div><strong>雷达停止阈值</strong><span>{mode} · {distance.toFixed(2)} m</span></div>
       <input type="range" min="0" max="2" step="0.05" value={distance} onChange={(event) => onChange(mode, Number(event.currentTarget.value))}/>
       <input type="number" min="0" max="5" step="0.05" value={distance} onChange={(event) => onChange(mode, Number(event.currentTarget.value))}/>
     </div>
@@ -38,9 +38,9 @@ export function ModeOperationPanel(props: Props) {
     <>
       {thresholdControl}
       <section className="mode-operation hud-panel">
-        <div className="panel-heading"><div><p className="panel-kicker">Mode Operation</p><h2>??????</h2></div><span className="tag-pill">{props.currentMode}</span></div>
+        <div className="panel-heading"><div><p className="panel-kicker">Mode Operation</p><h2>模式运行状态</h2></div><span className="tag-pill">{props.currentMode}</span></div>
         <div className="operation-body">
-          <div className="operation-primary"><Icon size={40}/><div><strong>{detail.headline}</strong><p>??????? /api/mode ???ROS2 ???? /ws/status ?????</p></div></div>
+          <div className="operation-primary"><Icon size={40}/><div><strong>{detail.headline}</strong><p>当前模式由后端 /api/mode 设置，ROS2 状态通过 /ws/status 实时回传。</p></div></div>
           <div className="operation-steps">{detail.actions.map((action,index)=><div key={action}><span>{String(index+1).padStart(2,"0")}</span>{action}</div>)}</div>
         </div>
       </section>
