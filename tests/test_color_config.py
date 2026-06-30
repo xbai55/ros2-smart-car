@@ -42,6 +42,24 @@ def test_color_tracker_publishes_bounding_box_and_uses_faster_default_rate():
     assert "process_rate_hz: 20.0" in config_source
 
 
+def test_color_tracker_does_not_draw_center_debug_line():
+    tracker_source = __import__("pathlib").Path("ros2_ws/src/smart_car_decision/smart_car_decision/color_tracker_node.py").read_text(encoding="utf-8-sig")
+
+    assert "frame.shape[1] // 2, 0" not in tracker_source
+def test_color_tracker_requests_frontend_friendly_camera_resolution():
+    tracker_source = __import__("pathlib").Path("ros2_ws/src/smart_car_decision/smart_car_decision/color_tracker_node.py").read_text(encoding="utf-8-sig")
+    config_source = __import__("pathlib").Path("ros2_ws/src/smart_car_decision/config/decision.yaml").read_text(encoding="utf-8-sig")
+
+    assert "camera_width" in tracker_source
+    assert "CAP_PROP_FRAME_WIDTH" in tracker_source
+    assert "CAP_PROP_FOURCC" in tracker_source
+    assert "CAP_V4L2" in tracker_source
+    assert "camera_fourcc: MJPG" in config_source
+    assert "camera_width: 1280" in config_source
+    assert "camera_height: 720" in config_source
+    assert "camera_fps: 30.0" in config_source
+    assert "annotated_jpeg_quality: 82" in config_source
+
 def test_partial_status_does_not_reset_applied_color_config_to_green():
     store = RobotStateStore()
     store.set_color_config({"name": "red", "hsv_low": [0, 80, 80], "hsv_high": [12, 255, 255]})

@@ -88,6 +88,10 @@ mode_manager:
 color_tracker_node:
   ros__parameters:
     camera_source: "0"
+    camera_fourcc: MJPG
+    camera_width: 1280
+    camera_height: 720
+    camera_fps: 30.0
     mode_topic: /robot/mode
     color_target_topic: /vision/color_target
     tracking_target_topic: /vision/tracking_target
@@ -95,7 +99,7 @@ color_tracker_node:
     tracking_target_set_topic: /vision/tracking_target/set
     lane_offset_topic: /lane/offset
     annotated_frame_topic: /vision/annotated_frame
-    annotated_jpeg_quality: 72
+    annotated_jpeg_quality: 82
     camera_buffer_size: 1
     process_rate_hz: 20.0
     min_area: 500.0

@@ -56,3 +56,11 @@ test("color preset buttons apply the selected HSV config immediately", () => {
   assert.match(source, /const nextConfig = \{\s*name: preset\.name,/);
   assert.match(source, /onApply\(nextConfig\)/);
 });
+
+test("live camera feed fills the camera frame", () => {
+  const css = readFileSync(join("web-console", "src/App.css"), "utf8");
+  const cameraFeedBlock = css.match(/\.camera-feed\s*\{[^}]+\}/s)?.[0] ?? "";
+
+  assert.match(cameraFeedBlock, /object-fit:\s*cover;/);
+  assert.doesNotMatch(cameraFeedBlock, /object-fit:\s*contain;/);
+});

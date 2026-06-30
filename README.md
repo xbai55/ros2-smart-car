@@ -12,7 +12,8 @@
 | 模式管理与急停 | 已实现并测试 | 支持 7 种模式；急停拥有最高控制优先级 |
 | 网页手动遥控 | 已实现并测试 | 浏览器发送方向命令，`manual` 和 `mapping` 模式允许移动命令 |
 | 激光雷达显示与安全停车 | 已实现并实车测试 | 显示 `/scan` 点云和前方距离，支持近障停车、减速、雷达超时停车和健康状态 |
-| YOLO11 通用目标识别 | 已实现并实车运行 | 使用 `yolo11s.pt`，发布识别结果和标注视频帧 |
+| YOLO11 通用目标识别 | 已实现并实车运行 | 默认使用 `yolo11s.pt`，发布识别结果和标注视频帧 |
+| 交通灯状态微调模型 | 已完成训练资产，待默认接入与实车验证 | 已加入 `traffic_light_yolo11s.pt` 和训练说明，当前作为下一轮低速上车验证基础 |
 | 人物目标跟随 | 已实现，完成感知链路测试 | 只选择 `person`，支持目标锁定、短时丢失保持和偏移控制；尚未完成空旷场地连续轨迹测试 |
 | HSV 颜色追踪 | 已实现并实车运行 | 支持红、绿、蓝、黄预设和自定义 HSV 范围 |
 | 颜色配置保存 | 已实现并测试 | 保存在浏览器本地，刷新后重新下发到 ROS；不是 Jetson 端永久配置文件 |
@@ -30,7 +31,7 @@ Yahboom 官方工作空间提供底盘串口驱动、激光雷达驱动和部分
 
 - 多模式管理、急停、命令超时和速度比例控制；
 - 雷达前方扇区计算、点云简化、坐标旋转和安全优先级控制；
-- YOLO11 推理节点、交通灯颜色辅助判定和安全命令保持；
+- YOLO11 推理节点、交通灯颜色辅助判定、安全命令保持和交通灯状态模型训练资产；
 - 只跟随人物的目标选择与跨帧锁定逻辑；
 - HSV 颜色追踪、运行时阈值配置和标注图像发布；
 - ROS2 状态汇总、FastAPI 服务和 React/Vite Web 控制台；
@@ -103,10 +104,12 @@ ros2-smart-car/
 ├─ ros2_ws/src/smart_car_decision/    # 自研 ROS2 功能包
 │  ├─ config/decision.yaml            # 控制、感知和 Web 参数
 │  ├─ launch/bringup_all.launch.py    # 底盘、雷达与自研节点统一启动
-│  ├─ models/yolo11s.pt               # YOLO11 模型权重
+│  ├─ models/yolo11s.pt               # 当前默认 YOLO11 通用模型权重
+│  ├─ models/traffic_light_yolo11s.pt # 交通灯状态微调模型权重
 │  ├─ smart_car_decision/             # Python ROS2 节点和纯逻辑模块
 │  └─ web/static/                     # 兼容静态 Web 页面
 ├─ web-console/                       # React/Vite Web 控制台及生产构建
+├─ training/traffic_light/            # 交通灯数据处理、训练指标和部署说明
 ├─ tests/                             # Python 自动化测试
 ├─ scripts/                           # Jetson、Docker 构建与运行脚本
 ├─ ros2_command/                      # 旧版 PC TCP 遥控工具
@@ -185,7 +188,7 @@ ros2-smart-car/
 
 ### 8.3 YOLO11 识别与自动控制
 
-YOLO 节点只在 `auto` 和 `object_follow` 模式下占用相机，其他模式会释放设备。当前模型为通用 `yolo11s.pt`，置信度阈值为 0.35，推理目标频率为 10 Hz。
+YOLO 节点只在 `auto` 和 `object_follow` 模式下占用相机，其他模式会释放设备。当前默认运行模型仍为通用 `yolo11s.pt`，置信度阈值为 0.35，推理目标频率为 10 Hz。
 
 `auto` 模式中的类别规则包括：
 
@@ -194,6 +197,10 @@ YOLO 节点只在 `auto` 和 `object_follow` 模式下占用相机，其他模�
 - 交通灯：在检测框内进一步使用 HSV 比例判断红灯或绿灯；
 - 未识别或无关类别：归一化为 `no_light`，不会因为偶发漏检直接反复切换到停车；
 - 安全命令保持 0.8 秒，降低检测帧抖动造成的控制跳变。
+
+仓库同时加入了第一版交通灯状态微调模型 `traffic_light_yolo11s.pt`，对应类别为 `red_light`、`yellow_light`、`green_light`、`off_light` 和 `unknown_light`。该模型基于公开道路数据训练，验证集整体指标为 `Precision 0.904 / Recall 0.789 / mAP50 0.840 / mAP50-95 0.486`，训练过程和数据说明见 `training/traffic_light/README.md`。
+
+需要注意的是，当前默认 `decision.yaml` 仍加载通用 `yolo11s.pt`，因此实车运行链路仍是“通用交通灯检测 + HSV 颜色辅助判断”。`traffic_light_yolo11s.pt` 已经具备低速上车验证基础，但还需要同步模型配置、类别到控制命令的映射、连续帧滤波和实车误检记录后，才能写成正式默认方案。可以把它理解为“模型训练这一步完成了，但车辆闭环默认开关还没有切过去”。
 
 ### 8.4 只跟随人物的目标选择
 
@@ -232,6 +239,8 @@ Web 控制台提供红、绿、蓝、黄预设，也允许手动输入 HSV 范�
 颜色配置同时保存在浏览器 `localStorage` 中。页面重新打开时会先读取本地配置并重新下发到 ROS。系统还使用由颜色名称和 HSV 数值生成的稳定键判断配置是否真的变化，避免 WebSocket 每次刷新产生新对象后，把用户正在编辑的红色配置重置成绿色。
 
 需要注意：颜色配置目前是“浏览器级保存”，不是 Jetson 端配置文件永久保存。清除浏览器数据、换一台设备或在浏览器尚未连接时重启系统，后端仍会先使用 `decision.yaml` 中的默认绿色。
+
+颜色追踪相机默认请求 V4L2 + MJPG、1280 x 720、30 FPS，并将标注 JPEG 质量提高到 82。这个改动主要解决实车颜色追踪画面发糊、帧尺寸偏低的问题；同时 Web 视频使用铺满画面的方式显示，避免操作时看到明显黑边或缩小预览。
 
 ### 8.6 摄像头所有权管理
 
@@ -364,10 +373,10 @@ PYTHONPATH=ros2_ws/src/smart_car_decision python -m pytest -q
 当前分支最近一次本地运行结果为：
 
 ```text
-55 passed
+78 passed
 ```
 
-55 项测试覆盖以下方面：
+78 项测试覆盖以下方面：
 
 | 测试组 | 覆盖内容 |
 | --- | --- |
@@ -389,18 +398,13 @@ PYTHONPATH=ros2_ws/src/smart_car_decision python -m pytest -q
 前端测试命令：
 
 ```bash
-node --experimental-strip-types --test --test-isolation=none \
-  web-console/tests/colorPersistence.test.ts \
-  web-console/tests/lidarHealth.test.ts \
-  web-console/tests/mappingControl.test.ts \
-  web-console/tests/robotApi.test.ts \
-  web-console/tests/videoState.test.ts
+node --experimental-strip-types --test --test-isolation=none web-console/tests/*.test.ts
 ```
 
 最近一次结果为：
 
 ```text
-10 passed
+33 passed
 ```
 
 覆盖内容包括：
@@ -414,6 +418,8 @@ node --experimental-strip-types --test --test-isolation=none \
 - 视频加载看门狗超时状态。
 - 雷达健康状态和操作员提示。
 - `mapping` 模式复用安全手动遥控面板。
+- 地图显示降噪、位姿平滑和地图重启/保存接口。
+- UI 文案防乱码、颜色预设即时应用和视频画面填充显示。
 
 生产构建命令：
 
@@ -456,8 +462,8 @@ TypeScript 编译和 Vite 生产构建已通过，生成的带哈希资源已部
 ### 13.2 算法能力限制
 
 - 人物锁定使用检测框中心连续性启发式算法，不是 ByteTrack、DeepSORT 或带 ReID 的多目标跟踪器；多人长时间交叉或完全遮挡后仍可能换人；
-- YOLO 使用通用 `yolo11s.pt`，尚未针对本项目场景制作数据集、训练模型或给出 mAP、Precision、Recall 等量化指标；
-- 交通灯判断依赖检测框内 HSV 比例，复杂光照、反光和远距离小目标下需要进一步标定；
+- 默认 YOLO 运行链路仍使用通用 `yolo11s.pt`；虽然已经训练出 `traffic_light_yolo11s.pt` 并记录了 mAP、Precision、Recall 等指标，但尚未切为默认模型并完成实车闭环验收；
+- 当前默认交通灯判断仍依赖检测框内 HSV 比例，复杂光照、反光和远距离小目标下需要进一步标定；微调模型后续也需要补充本车摄像头数据；
 - 雷达距离参数根据当前安装方向和现场测试设置，更换安装方向后必须重新校准 `front_center_deg`；
 - 当前跟随控制主要是横向比例控制，没有目标距离视觉估计、速度平滑、加速度约束和轨迹预测。
 

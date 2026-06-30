@@ -39,6 +39,10 @@ class ColorTrackerNode(Node):
         self.declare_parameter("lane_offset_topic", "/lane/offset")
         self.declare_parameter("annotated_frame_topic", "/vision/annotated_frame")
         self.declare_parameter("annotated_jpeg_quality", 72)
+        self.declare_parameter("camera_fourcc", "MJPG")
+        self.declare_parameter("camera_width", 0)
+        self.declare_parameter("camera_height", 0)
+        self.declare_parameter("camera_fps", 0.0)
         self.declare_parameter("camera_buffer_size", 1)
         self.declare_parameter("process_rate_hz", 20.0)
         self.declare_parameter("min_area", 500.0)
@@ -56,6 +60,10 @@ class ColorTrackerNode(Node):
             30,
             min(95, int(self.get_parameter("annotated_jpeg_quality").value)),
         )
+        self.camera_fourcc = str(self.get_parameter("camera_fourcc").value).strip()
+        self.camera_width = max(0, int(self.get_parameter("camera_width").value))
+        self.camera_height = max(0, int(self.get_parameter("camera_height").value))
+        self.camera_fps = max(0.0, float(self.get_parameter("camera_fps").value))
         self.camera_buffer_size = max(1, int(self.get_parameter("camera_buffer_size").value))
         self.process_rate_hz = float(self.get_parameter("process_rate_hz").value)
         self.min_area = float(self.get_parameter("min_area").value)
@@ -154,7 +162,6 @@ class ColorTrackerNode(Node):
                 x, y, w, h = bounding_box
                 self.cv2.rectangle(annotated, (x, y), (x + w, y + h), (0, 255, 255), 3)
             self.cv2.circle(annotated, (cx, cy), 18, (0, 255, 255), 3)
-            self.cv2.line(annotated, (frame.shape[1] // 2, 0), (frame.shape[1] // 2, frame.shape[0]), (255, 180, 0), 2)
             self.cv2.putText(
                 annotated,
                 f"color target area={int(area)}",
@@ -189,7 +196,20 @@ class ColorTrackerNode(Node):
     def _open_camera(self):
         if self.camera is not None and self.camera.isOpened():
             return True
-        self.camera = self.cv2.VideoCapture(self._parse_camera_source(self.camera_source))
+        parsed_source = self._parse_camera_source(self.camera_source)
+        if isinstance(parsed_source, int):
+            self.camera = self.cv2.VideoCapture(parsed_source, self.cv2.CAP_V4L2)
+        else:
+            self.camera = self.cv2.VideoCapture(parsed_source)
+        if self.camera_fourcc:
+            fourcc = self.cv2.VideoWriter_fourcc(*self.camera_fourcc[:4])
+            self.camera.set(self.cv2.CAP_PROP_FOURCC, fourcc)
+        if self.camera_width > 0:
+            self.camera.set(self.cv2.CAP_PROP_FRAME_WIDTH, self.camera_width)
+        if self.camera_height > 0:
+            self.camera.set(self.cv2.CAP_PROP_FRAME_HEIGHT, self.camera_height)
+        if self.camera_fps > 0:
+            self.camera.set(self.cv2.CAP_PROP_FPS, self.camera_fps)
         self.camera.set(self.cv2.CAP_PROP_BUFFERSIZE, self.camera_buffer_size)
         if not self.camera.isOpened():
             self.get_logger().warning(
