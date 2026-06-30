@@ -9,6 +9,15 @@ export const LOW_CONFIDENCE_COLOR = "#23556a";
 export const OBSTACLE_COLOR = "#19dfff";
 export const GRID_STROKE_COLOR = "#08263d";
 
+export function stableSquareViewBox(width: number, height: number) {
+  const safeWidth = Math.max(1, width);
+  const safeHeight = Math.max(1, height);
+  const viewportSize = Math.max(safeWidth, safeHeight);
+  const x = (safeWidth - viewportSize) / 2;
+  const y = (safeHeight - viewportSize) / 2;
+  return `${x} ${y} ${viewportSize} ${viewportSize}`;
+}
+
 export function cellColor(value: number) {
   if (value < 0) return UNKNOWN_COLOR;
   if (value < 25) return FREE_COLOR;

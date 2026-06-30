@@ -5,6 +5,7 @@ import {
   enhancedDisplayValue,
   FREE_VALUE,
   OBSTACLE_VALUE,
+  stableSquareViewBox,
   UNKNOWN_VALUE,
 } from "../src/mapDisplay.ts";
 
@@ -34,4 +35,16 @@ test("enhanced map visually bridges a one-cell obstacle gap", () => {
   cells[1 * width + 3] = OBSTACLE_VALUE;
 
   assert.equal(enhancedDisplayValue(cells, width, height, 2, 1), OBSTACLE_VALUE);
+});
+
+test("stable square viewBox pads wide maps without changing map coordinates", () => {
+  assert.equal(stableSquareViewBox(57, 46), "0 -5.5 57 57");
+});
+
+test("stable square viewBox pads tall maps without changing map coordinates", () => {
+  assert.equal(stableSquareViewBox(32, 106), "-37 0 106 106");
+});
+
+test("stable square viewBox uses a safe minimum for empty dimensions", () => {
+  assert.equal(stableSquareViewBox(0, 0), "0 0 1 1");
 });

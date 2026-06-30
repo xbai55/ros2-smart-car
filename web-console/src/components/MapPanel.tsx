@@ -16,6 +16,7 @@ import {
   enhancedDisplayValue,
   GRID_STROKE_COLOR,
   shouldRemoveObstacleNoise,
+  stableSquareViewBox,
   UNKNOWN_COLOR,
 } from "../mapDisplay";
 import {
@@ -266,7 +267,7 @@ export function MapPanel({
   const height = snapshot?.info.height ?? map.height;
   const resolution = snapshot?.info.resolution ?? map.resolution;
   const cells = snapshot?.data ?? [];
-  const viewBox = `0 0 ${Math.max(width, 1)} ${Math.max(height, 1)}`;
+  const viewBox = stableSquareViewBox(width, height);
   const updatedAge = snapshot ? Math.max(0, Date.now() / 1000 - snapshot.updated_at) : null;
   const noiseRatio = snapshot ? calculateNoiseRatio(cells, width, height) : null;
   const quality = qualityLabel(map, lidar, speed, noiseRatio);
