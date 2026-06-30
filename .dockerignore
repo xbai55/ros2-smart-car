@@ -6,3 +6,5 @@ ros2_ws/install
 ros2_ws/log
 src/**/Debug
 src/**/Release
+debug_logs*
+web-console/node_modules

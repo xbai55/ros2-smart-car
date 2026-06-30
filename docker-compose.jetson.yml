@@ -1,0 +1,40 @@
+services:
+  smart-car-runtime:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: ${SMART_CAR_BASE_IMAGE:-docker.m.daocloud.io/library/ros:humble-ros-base}
+    image: ros2-smart-car:humble-runtime
+    container_name: smart-car-runtime
+    network_mode: host
+    ipc: host
+    privileged: true
+    restart: unless-stopped
+    environment:
+      ROS_DOMAIN_ID: "77"
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+      SMART_CAR_ROOT: /workspace/ros2-smart-car
+      SMART_CAR_STOP_VENDOR_ROSMASTER: "1"
+      SMART_CAR_REQUIRE_LIDAR: ${SMART_CAR_REQUIRE_LIDAR:-1}
+      SMART_CAR_REQUIRE_CAMERA: ${SMART_CAR_REQUIRE_CAMERA:-1}
+      SMART_CAR_LIDAR_PORT: ${SMART_CAR_LIDAR_PORT:-/dev/rplidar}
+      SMART_CAR_CAMERA_SOURCE: ${SMART_CAR_CAMERA_SOURCE:-0}
+      SMART_CAR_START_LIDAR_DRIVER: ${SMART_CAR_START_LIDAR_DRIVER:-1}
+      SMART_CAR_START_YOLO_CAMERA: ${SMART_CAR_START_YOLO_CAMERA:-1}
+      SMART_CAR_START_COLOR_TRACKER: ${SMART_CAR_START_COLOR_TRACKER:-1}
+      SMART_CAR_START_WEB_CAMERA: ${SMART_CAR_START_WEB_CAMERA:-1}
+      PYTHONPATH: /opt/yahboomcar_ros2_ws/software/py_install_V3.3.1/Rosmaster_Lib:/opt/Rosmaster/rosmaster
+      YOLO_CONFIG_DIR: /tmp/Ultralytics
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: all
+    volumes:
+      - /dev:/dev
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - /home/jetson/yahboomcar_ros2_ws:/opt/yahboomcar_ros2_ws:ro
+      - /home/jetson/yahboomcar_ros2_ws_yahboomcar_ws:/opt/yahboomcar_ros2_ws_yahboomcar_ws:ro
+      - /home/jetson/Rosmaster:/opt/Rosmaster:ro
+      - ./web-console/dist:/home/jetson/ros2-smart-car/web-console/dist:ro
+      - ./maps:/workspace/ros2-smart-car/maps
+      - ./debug_logs:/workspace/ros2-smart-car/debug_logs
+    command: ["/workspace/ros2-smart-car/docker/launch_runtime.sh"]

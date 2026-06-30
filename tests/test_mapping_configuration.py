@@ -60,7 +60,21 @@ def test_bringup_launch_starts_vendor_odom_and_scan_tf_chain():
     assert "odom_raw" in source
     assert "robot_state_publisher" in source
     assert "yahboomcar_X3.urdf" in source
-    assert "serial_port:=/dev/rplidar" in source
+    assert "lidar_serial_port" in source
+    assert "SMART_CAR_LIDAR_PORT" in source
+    assert "serial_port:=" in source
     assert "sllidar_a2m8_launch.py" not in source
     assert "base_to_scan_laser_static_tf" in source
     assert "--child-frame-id\", \"laser" in source
+
+
+def test_bringup_launch_can_disable_camera_nodes_and_override_camera_source():
+    source = (PACKAGE / "launch/bringup_all.launch.py").read_text(encoding="utf-8")
+
+    assert "start_yolo_camera" in source
+    assert "start_color_tracker" in source
+    assert "start_web_camera" in source
+    assert "SMART_CAR_CAMERA_SOURCE" in source
+    assert "enable_camera_stream" in source
+    assert "condition=IfCondition(LaunchConfiguration(\"start_yolo_camera\"))" in source
+    assert "condition=IfCondition(LaunchConfiguration(\"start_color_tracker\"))" in source

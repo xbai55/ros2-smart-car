@@ -36,6 +36,7 @@ class WebAppNode(Node):
         self.declare_parameter("tracking_target_set_topic", "/vision/tracking_target/set")
         self.declare_parameter("annotated_frame_topic", "/vision/annotated_frame")
         self.declare_parameter("camera_source", "0")
+        self.declare_parameter("enable_camera_stream", True)
         self.declare_parameter("video_fps", 30.0)
         self.declare_parameter("video_target_fps", 20.0)
         self.declare_parameter("annotated_stream_fps", 20.0)
@@ -138,6 +139,12 @@ class WebAppNode(Node):
         self.tracking_target_pub.publish(msg)
         return request
 
+    @staticmethod
+    def _as_bool(value):
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() not in {"0", "false", "no", "off"}
+
     def _run_server(self):
         try:
             import cv2
@@ -151,13 +158,16 @@ class WebAppNode(Node):
             return
 
         node = self
-        camera = CameraStream(
-            str(self.get_parameter("camera_source").value),
-            cv2,
-            lambda: node.store.snapshot().get("mode", "stop"),
-            capture_fps=float(self.get_parameter("video_fps").value),
-            target_fps=float(self.get_parameter("video_target_fps").value),
-        )
+        enable_camera_stream = self._as_bool(self.get_parameter("enable_camera_stream").value)
+        camera = None
+        if enable_camera_stream:
+            camera = CameraStream(
+                str(self.get_parameter("camera_source").value),
+                cv2,
+                lambda: node.store.snapshot().get("mode", "stop"),
+                capture_fps=float(self.get_parameter("video_fps").value),
+                target_fps=float(self.get_parameter("video_target_fps").value),
+            )
         node.camera_stream = camera
         annotated_stream = AnnotatedFrameStream(
             node.annotated_frames,
@@ -286,6 +296,8 @@ class WebAppNode(Node):
 
         @app.get("/video_feed")
         def video_feed():
+            if camera is None:
+                raise HTTPException(status_code=503, detail="camera stream is disabled")
             if camera.is_blocked_by_mode():
                 camera.close()
                 return StreamingResponse(

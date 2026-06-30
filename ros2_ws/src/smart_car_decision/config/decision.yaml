@@ -63,6 +63,7 @@ yolo11_camera_node:
     annotated_frame_topic: /vision/annotated_frame
     annotated_jpeg_quality: 72
     camera_buffer_size: 1
+    camera_reopen_interval_sec: 2.0
     mode_topic: /robot/mode
     active_modes: [auto, object_follow]
     default_command: no_light
@@ -150,6 +151,7 @@ web_app_node:
     color_config_topic: /vision/color_config
     annotated_frame_topic: /vision/annotated_frame
     camera_source: "0"
+    enable_camera_stream: true
     video_fps: 30.0
     video_target_fps: 20.0
     annotated_stream_fps: 20.0

@@ -89,6 +89,7 @@ class Yolo11CameraNode(Node):
         self.declare_parameter("annotated_frame_topic", "/vision/annotated_frame")
         self.declare_parameter("annotated_jpeg_quality", 72)
         self.declare_parameter("camera_buffer_size", 1)
+        self.declare_parameter("camera_reopen_interval_sec", 2.0)
         self.declare_parameter("mode_topic", "/robot/mode")
         self.declare_parameter("active_modes", ["auto", "object_follow"])
         self.declare_parameter("default_command", "no_light")
@@ -141,6 +142,10 @@ class Yolo11CameraNode(Node):
             min(95, int(self.get_parameter("annotated_jpeg_quality").value)),
         )
         self.camera_buffer_size = max(1, int(self.get_parameter("camera_buffer_size").value))
+        self.camera_reopen_interval_sec = max(
+            0.5,
+            float(self.get_parameter("camera_reopen_interval_sec").value),
+        )
         self.mode_topic = str(self.get_parameter("mode_topic").value)
         self.active_modes = {
             normalize_mode(mode) for mode in self.get_parameter("active_modes").value
@@ -399,6 +404,10 @@ class Yolo11CameraNode(Node):
             self.camera.set(self.cv2.CAP_PROP_FPS, self.camera_fps)
         self.camera.set(self.cv2.CAP_PROP_BUFFERSIZE, self.camera_buffer_size)
         if not self.camera.isOpened():
+            self.get_logger().warning(
+                f"Could not open YOLO camera source: {self.camera_source}; will retry while mode is active",
+                throttle_duration_sec=5.0,
+            )
             self._close_camera()
             return False
         self.get_logger().info(f"Opened YOLO camera source: {self.camera_source}")
@@ -406,7 +415,7 @@ class Yolo11CameraNode(Node):
 
     def _try_reopen_camera(self):
         now = time.monotonic()
-        if now - self.last_reopen_time < 1.0:
+        if now - self.last_reopen_time < self.camera_reopen_interval_sec:
             return
         self.last_reopen_time = now
         if self._open_camera():

@@ -1,0 +1,24 @@
+services:
+  smart-car-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BASE_IMAGE: ${SMART_CAR_BASE_IMAGE:-ros:humble-ros-base}
+    image: ros2-smart-car:humble-dev
+    container_name: smart-car-dev
+    network_mode: host
+    environment:
+      ROS_DOMAIN_ID: "77"
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+      ROBOT_HOST: "192.168.156.204"
+    volumes:
+      - .:/workspace/ros2-smart-car
+    working_dir: /workspace/ros2-smart-car
+    entrypoint: ["/bin/bash", "-lc"]
+    command: >
+      source /opt/ros/humble/setup.bash &&
+      if [ -f ros2_ws/install/setup.bash ]; then source ros2_ws/install/setup.bash; fi &&
+      exec bash
+    stdin_open: true
+    tty: true

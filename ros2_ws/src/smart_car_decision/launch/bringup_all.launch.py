@@ -4,8 +4,9 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -13,6 +14,8 @@ def generate_launch_description():
     yahboom_description_share = Path(get_package_share_directory("yahboomcar_description"))
     params = str(pkg_share / "config" / "decision.yaml")
     x3_urdf = str(yahboom_description_share / "urdf" / "yahboomcar_X3.urdf")
+    camera_source = ParameterValue(LaunchConfiguration("camera_source"), value_type=str)
+    enable_web_camera = ParameterValue(LaunchConfiguration("start_web_camera"), value_type=bool)
 
     return LaunchDescription(
         [
@@ -25,6 +28,31 @@ def generate_launch_description():
                 "start_lidar_driver",
                 default_value="true",
                 description="Start SLLidar driver so /scan is available for safety and radar visualization.",
+            ),
+            DeclareLaunchArgument(
+                "lidar_serial_port",
+                default_value=EnvironmentVariable("SMART_CAR_LIDAR_PORT", default_value="/dev/rplidar"),
+                description="Serial port for the SLLidar driver.",
+            ),
+            DeclareLaunchArgument(
+                "camera_source",
+                default_value=EnvironmentVariable("SMART_CAR_CAMERA_SOURCE", default_value="0"),
+                description="OpenCV camera source used by camera-capable nodes.",
+            ),
+            DeclareLaunchArgument(
+                "start_yolo_camera",
+                default_value=EnvironmentVariable("SMART_CAR_START_YOLO_CAMERA", default_value="true"),
+                description="Start YOLO camera node.",
+            ),
+            DeclareLaunchArgument(
+                "start_color_tracker",
+                default_value=EnvironmentVariable("SMART_CAR_START_COLOR_TRACKER", default_value="true"),
+                description="Start color tracker node.",
+            ),
+            DeclareLaunchArgument(
+                "start_web_camera",
+                default_value=EnvironmentVariable("SMART_CAR_START_WEB_CAMERA", default_value="true"),
+                description="Enable direct Web camera stream in web_app_node.",
             ),
             DeclareLaunchArgument(
                 "start_base_odom",
@@ -54,7 +82,7 @@ def generate_launch_description():
                     "launch",
                     "sllidar_ros2",
                     "sllidar_launch.py",
-                    "serial_port:=/dev/rplidar",
+                    PythonExpression(["'serial_port:=' + '", LaunchConfiguration("lidar_serial_port"), "'"]),
                     "serial_baudrate:=115200",
                     "frame_id:=laser",
                 ],
@@ -108,10 +136,36 @@ def generate_launch_description():
             Node(package="smart_car_decision", executable="laser_obstacle_monitor", name="laser_obstacle_monitor", output="screen", parameters=[params]),
             Node(package="smart_car_decision", executable="decision_controller", name="decision_controller", output="screen", parameters=[params]),
             Node(package="smart_car_decision", executable="tcp_command_bridge", name="tcp_command_bridge", output="screen", parameters=[params]),
-            Node(package="smart_car_decision", executable="yolo11_camera_node", name="yolo11_camera_node", output="screen", parameters=[params]),
-            Node(package="smart_car_decision", executable="color_tracker_node", name="color_tracker_node", output="screen", parameters=[params]),
+            Node(
+                package="smart_car_decision",
+                executable="yolo11_camera_node",
+                name="yolo11_camera_node",
+                output="screen",
+                parameters=[params, {"camera_source": camera_source}],
+                condition=IfCondition(LaunchConfiguration("start_yolo_camera")),
+            ),
+            Node(
+                package="smart_car_decision",
+                executable="color_tracker_node",
+                name="color_tracker_node",
+                output="screen",
+                parameters=[params, {"camera_source": camera_source}],
+                condition=IfCondition(LaunchConfiguration("start_color_tracker")),
+            ),
             Node(package="smart_car_decision", executable="object_follow_node", name="object_follow_node", output="screen", parameters=[params]),
             Node(package="smart_car_decision", executable="system_status_node", name="system_status_node", output="screen", parameters=[params]),
-            Node(package="smart_car_decision", executable="web_app_node", name="web_app_node", output="screen", parameters=[params]),
+            Node(
+                package="smart_car_decision",
+                executable="web_app_node",
+                name="web_app_node",
+                output="screen",
+                parameters=[
+                    params,
+                    {
+                        "camera_source": camera_source,
+                        "enable_camera_stream": enable_web_camera,
+                    },
+                ],
+            ),
         ]
     )

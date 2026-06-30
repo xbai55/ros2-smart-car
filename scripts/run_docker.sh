@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-docker build -t ros2-smart-car:humble .
-docker run --rm -it --network host --privileged \
-  -v /dev:/dev \
-  ros2-smart-car:humble
+cd "$(dirname "$0")/.."
+
+if docker compose version >/dev/null 2>&1; then
+  docker compose -f docker-compose.jetson.yml up --build
+else
+  docker-compose -f docker-compose.jetson.yml up --build
+fi
