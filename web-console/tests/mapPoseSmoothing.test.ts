@@ -62,6 +62,17 @@ test("map pose conversion keeps the vehicle icon front aligned with the physical
   });
 });
 
+test("map pose conversion subtracts OccupancyGrid origin before scaling", () => {
+  const frame = { width: 100, height: 80, resolution: 0.05, originX: -1.5, originY: -2.0 };
+
+  assert.deepEqual(mapPoseToScreenCell(frame, { x: -1.0, y: -1.25, yaw: 0 }), {
+    x: 10,
+    y: 65,
+    yawDeg: 180,
+    motionYawDeg: 0,
+  });
+});
+
 test("command projection drives the marker from motion heading, not icon heading", () => {
   const pose = { x: 50, y: 50, yawDeg: 180, motionYawDeg: 0 };
 
