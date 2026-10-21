@@ -1,127 +1,30 @@
-import { CircleStop, Gamepad2, Navigation, OctagonAlert, Route, Wifi, WifiOff } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { createRobotApi, type MapSnapshot } from "../../robotApi";
-import { modes } from "../../data/consoleData";
-import { useRobotStream } from "../../hooks/useRobotStream";
-import type { DemoMap } from "../../services/adapters";
+import { CircleStop, Gamepad2, Map, Navigation, Route } from "lucide-react";
 import type { Robot } from "../../types/domain";
-import { cn } from "../../lib/cn";
+import { useRobotStream } from "../../hooks/useRobotStream";
+import { LIVE_ROBOT_ID, COMMAND_LABELS } from "../../liveControl";
+import { Link } from "../../lib/router";
+import { LiveMapCanvas } from "./LiveMapCanvas";
 import { RobotCamera } from "./RobotCamera";
-import { RobotMapCanvas } from "./RobotMapCanvas";
-
-const MANUAL: Array<{ id: string; label: string; slot: string }> = [
-  { id: "forward", label: "前进", slot: "top" },
-  { id: "turn_l", label: "左旋", slot: "ml" },
-  { id: "stop", label: "停止", slot: "mc" },
-  { id: "turn_r", label: "右旋", slot: "mr" },
-  { id: "left", label: "左移", slot: "bl" },
-  { id: "backward", label: "后退", slot: "bc" },
-  { id: "right", label: "右移", slot: "br" },
-];
-
-function DrivePad({ onCommand }: { onCommand: (command: string) => void }) {
-  return (
-    <div className="drive-pad-new">
-      {MANUAL.map((cmd) => (
-        <button
-          key={cmd.id}
-          type="button"
-          className={cn("drive-btn-new", cmd.slot, cmd.id === "stop" && "danger")}
-          onPointerDown={(e) => { e.preventDefault(); if (cmd.id === "stop") onCommand("stop"); else onCommand(cmd.id); }}
-          onPointerUp={() => onCommand("stop")}
-          onPointerLeave={() => onCommand("stop")}
-          aria-label={cmd.label}
-        >
-          {cmd.id === "stop" ? <CircleStop size={20} /> : <span className="drive-arrow">{cmd.id === "forward" ? "▲" : cmd.id === "backward" ? "▼" : cmd.id === "left" ? "◀" : cmd.id === "right" ? "▶" : cmd.id === "turn_l" ? "↺" : "↻"}</span>}
-        </button>
-      ))}
-    </div>
-  );
+import { DrivePad } from "./DrivePad";
+import { MotionSettings } from "./MotionSettings";
+import { LiveConnectionBar, LiveFeedback } from "./LiveFeedback";
+import { cn } from "../../lib/cn";
+import { useState } from "react";
+import { NavigationWorkspace } from "./NavigationWorkspace";
+const modes=[{id:"stop",label:"停止",icon:CircleStop},{id:"manual",label:"手动驾驶",icon:Gamepad2},{id:"auto",label:"自动避障",icon:Route},{id:"navigation",label:"导航",icon:Navigation}];
+export function RobotRunWorkspace({robot}:{robot:Robot}) {
+  const [mapView,setMapView]=useState<"lab"|"live">("lab");
+  const live=useRobotStream(),s=live.status,bound=robot.id===LIVE_ROBOT_ID,online=bound&&live.connection==="connected";
+  if(!bound)return <div className="unbound-robot"><Gamepad2 size={35}/><h3>未绑定实车连接</h3><p>尚未绑定实车连接，运动控制不可用。</p><Link to="/robots/r-001/run" className="btn btn-primary">进入智巡一号实车工作区</Link></div>;
+  return <div className="live-run-workspace">
+    <LiveConnectionBar/><LiveFeedback/>
+    <div className="live-run-modes"><div>{modes.map(({id,label,icon:Icon})=><button type="button" key={id} disabled={(id!=="navigation"&&!online)||live.pending||(s.emergency_stop&&id!=="stop")} aria-pressed={s.mode===id} className={cn("btn",s.mode===id?"btn-primary":"btn-outline")} onClick={()=>{if(id==="navigation")setMapView("lab");else void live.setMode(id);}}><Icon size={15}/>{label}</button>)}</div><div><Link className="btn btn-outline" to="/slam"><Map size={15}/>SLAM 建图</Link></div></div>
+    <div className="live-run-grid"><div className="live-run-map"><div className="navigation-view-switch"><button aria-pressed={mapView==="lab"} onClick={()=>setMapView("lab")}>地图与导航</button><button aria-pressed={mapView==="live"} onClick={()=>setMapView("live")}>SLAM 原始地图</button></div><div hidden={mapView!=="lab"}><NavigationWorkspace/></div>{mapView==="live"&&<LiveMapCanvas/>}<div className="live-run-telemetry">
+      <Telemetry label="当前指令" value={online?COMMAND_LABELS[s.last_command]??s.last_command:"—"}/>
+      <Telemetry label="控制输出 X / Y" value={online&&s.cmd_vel.ok?`${s.cmd_vel.linear_x.toFixed(3)} / ${s.cmd_vel.linear_y.toFixed(3)} m/s`:"—"}/>
+      <Telemetry label="控制输出角速度" value={online&&s.cmd_vel.ok?s.cmd_vel.angular_z.toFixed(3)+" rad/s":"—"}/>
+      <Telemetry label="前方距离" value={online&&s.front_distance!=null?s.front_distance.toFixed(2)+" m":"—"}/>
+    </div><div className="live-odom-readout"><span>实测里程计速度 X：{online&&s.odom.ok?s.odom.linear_speed.toFixed(3)+" m/s":"—"}</span><span>实测角速度：{online&&s.odom.ok?s.odom.angular_speed.toFixed(3)+" rad/s":"—"}</span></div><MotionSettings compact/></div><aside className="live-run-side"><RobotCamera robot={robot}/><DrivePad robotId={robot.id}/></aside></div>
+  </div>;
 }
-
-export function RobotRunWorkspace({ robot }: { robot: Robot }) {
-  const { status, connection, setMode, sendCommand, setEmergencyStop, setSpeed } = useRobotStream();
-  const api = useMemo(() => createRobotApi(), []);
-  const [liveMap, setLiveMap] = useState<DemoMap | null>(null);
-  const [speed, setSpeedLocal] = useState(() => Math.round(status.speed_scale * 100));
-
-  useEffect(() => {
-    let active = true;
-    api.getMap().then((snapshot: MapSnapshot) => {
-      if (active && snapshot.info) {
-        setLiveMap({ width: snapshot.info.width, height: snapshot.info.height, resolution: snapshot.info.resolution, data: snapshot.data });
-      }
-    }).catch(() => { /* 离线时地图画布回退到示意地图 */ });
-    return () => { active = false; };
-  }, [api]);
-
-  useEffect(() => {
-    if (connection === "connected") setSpeedLocal(Math.round(status.speed_scale * 100));
-  }, [connection, status.speed_scale]);
-
-  const currentMode = status.mode;
-  const connected = connection === "connected";
-
-  return (
-    <div className="run-workspace">
-      <header className="run-topbar">
-        <div className="run-identity">
-          <span className={cn("run-dot", robot.health)} />
-          <div><strong>{robot.name}</strong><em>{robot.zone} · 运行工作区</em></div>
-        </div>
-        <div className="run-modes">
-          {modes.map((m) => {
-            const Icon = m.icon;
-            return (
-              <button key={m.id} type="button" disabled={!connected} className={cn("run-mode", currentMode === m.id && "active")} onClick={() => setMode(m.id)}>
-                <Icon size={14} />{m.name}
-              </button>
-            );
-          })}
-        </div>
-        <div className="run-top-actions">
-          <label className="run-speed">
-            <span>速度 {speed}%</span>
-            <input type="range" min={0} max={100} value={speed} disabled={!connected} onChange={(e) => { const v = Number(e.target.value); setSpeedLocal(v); setSpeed(v / 100); }} />
-          </label>
-          <button type="button" className={cn("run-emergency", status.emergency_stop && "active")} disabled={!connected} onClick={() => setEmergencyStop(!status.emergency_stop)}>
-            <OctagonAlert size={16} />{status.emergency_stop ? "解除急停" : "急停"}
-          </button>
-          <span className={cn("run-conn", connected ? "on" : "off")}>{connected ? <Wifi size={14} /> : <WifiOff size={14} />}{connected ? "实时在线" : "离线"}</span>
-        </div>
-      </header>
-
-      <div className="run-grid">
-        <div className="run-map-pane">
-          <RobotMapCanvas robots={[robot]} incidents={[]} mapOverride={liveMap} />
-        </div>
-        <div className="run-side">
-          <RobotCamera robot={robot} />
-          <div className="run-telemetry">
-            <div className="run-telemetry-title">遥测</div>
-            <div className="run-telemetry-grid">
-              <TelemetryItem label="线性速度" value={status.cmd_vel.ok ? `${status.cmd_vel.linear_x.toFixed(2)} m/s` : "--"} />
-              <TelemetryItem label="角速度" value={status.cmd_vel.ok ? `${status.cmd_vel.angular_z.toFixed(2)} rad/s` : "--"} />
-              <TelemetryItem label="前方距离" value={status.front_distance == null ? "--" : `${status.front_distance.toFixed(2)} m`} />
-              <TelemetryItem label="定位" value={status.map_pose.ok ? "正常" : "待定位"} />
-            </div>
-          </div>
-          <div className="run-drive">
-            <div className="run-drive-title">手动控制</div>
-            <DrivePad onCommand={sendCommand} />
-            <p className="run-drive-hint">所有指令经 decision_controller 安全仲裁后下发 /cmd_vel</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function TelemetryItem({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="telemetry-item">
-      <em>{label}</em>
-      <strong>{value}</strong>
-    </div>
-  );
-}
+function Telemetry({label,value}:{label:string;value:string}) {return <div><span>{label}</span><strong>{value}</strong></div>;}

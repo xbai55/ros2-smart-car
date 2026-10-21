@@ -1,7 +1,7 @@
 import copy
 import time
 
-from .control_policy import normalize_manual_command, normalize_mode
+from .control_policy import MANUAL_COMMAND_MODES, normalize_manual_command, normalize_mode
 from .color_config import DEFAULT_COLOR_CONFIG, normalize_color_config
 
 MIN_SPEED_SCALE = 0.15
@@ -35,6 +35,43 @@ def normalize_tracking_target_request(payload):
     if not 0.0 <= x <= 1.0 or not 0.0 <= y <= 1.0:
         raise ValueError("tracking target coordinates must be normalized to [0, 1]")
     return {"action": "select", "x": x, "y": y}
+
+
+PATROL_ACTIVE_ACTIONS = {"start", "resume", "progress"}
+MISSION_ACTIVE_ACTIONS = {"dispatch", "transporting"}
+
+
+def _task_progress(payload):
+    try:
+        return max(0.0, min(1.0, float(payload.get("progress"))))
+    except (TypeError, ValueError):
+        return None
+
+
+def normalize_patrol_task_state(payload, now=None):
+    """把巡检任务指令归一化为状态快照（active 表示任务正在进行）。"""
+    payload = payload or {}
+    action = str(payload.get("action") or "").strip().lower()
+    return {
+        "active": action in PATROL_ACTIVE_ACTIONS,
+        "message": action or "idle",
+        "action": action or None,
+        "progress": _task_progress(payload),
+        "updated_at": time.time() if now is None else float(now),
+    }
+
+
+def normalize_mission_task_state(payload, now=None):
+    """把运输任务指令归一化为状态快照。"""
+    payload = payload or {}
+    action = str(payload.get("action") or "").strip().lower()
+    return {
+        "active": action in MISSION_ACTIVE_ACTIONS,
+        "message": action or "idle",
+        "action": action or None,
+        "status": payload.get("status"),
+        "updated_at": time.time() if now is None else float(now),
+    }
 
 
 class RobotStateStore:
@@ -104,6 +141,8 @@ class RobotStateStore:
             "speed_scale": 1.0,
             "color_config": DEFAULT_COLOR_CONFIG,
             "mode_obstacle_stop_distances": dict(DEFAULT_MODE_OBSTACLE_STOP_DISTANCES),
+            "patrol_task": {"active": False, "message": "idle", "action": None, "progress": None, "updated_at": None},
+            "mission_task": {"active": False, "message": "idle", "action": None, "status": None, "updated_at": None},
             "updated_at": time.time(),
         }
 
@@ -117,6 +156,8 @@ class RobotStateStore:
 
     def set_mode(self, mode):
         next_mode = normalize_mode(mode)
+        if self._state["emergency_stop"]:
+            next_mode = "stop"
         self._state["mode"] = next_mode
         if next_mode == "stop":
             self._state["last_command"] = "stop"
@@ -124,7 +165,7 @@ class RobotStateStore:
         return next_mode
 
     def set_command(self, command):
-        if self._state["mode"] not in {"manual", "mapping"}:
+        if self._state["emergency_stop"] or self._state["mode"] not in MANUAL_COMMAND_MODES:
             self._state["last_command"] = "stop"
             self._touch()
             return "stop"
@@ -142,7 +183,8 @@ class RobotStateStore:
         return self._state["emergency_stop"]
 
     def set_speed_scale(self, value):
-        scale = max(MIN_SPEED_SCALE, min(1.0, float(value)))
+        maximum = 0.5 if self._state["mode"] == "mapping" else 1.0
+        scale = max(MIN_SPEED_SCALE, min(maximum, float(value)))
         self._state["speed_scale"] = scale
         self._touch()
         return scale
@@ -160,6 +202,16 @@ class RobotStateStore:
         self._state["mode_obstacle_stop_distances"] = distances
         self._touch()
         return distances
+
+    def set_patrol_task(self, payload):
+        self._state["patrol_task"] = normalize_patrol_task_state(payload)
+        self._touch()
+        return dict(self._state["patrol_task"])
+
+    def set_mission_task(self, payload):
+        self._state["mission_task"] = normalize_mission_task_state(payload)
+        self._touch()
+        return dict(self._state["mission_task"])
 
     def _touch(self):
         self._state["updated_at"] = time.time()

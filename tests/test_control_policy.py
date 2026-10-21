@@ -232,3 +232,35 @@ def test_mapping_mode_stops_when_scan_or_manual_command_is_stale():
 
     assert stale_scan == {"linear_x": 0.0, "linear_y": 0.0, "angular_z": 0.0}
     assert stale_command == {"linear_x": 0.0, "linear_y": 0.0, "angular_z": 0.0}
+
+
+@pytest.mark.parametrize("mode", ["manual", "mapping"])
+@pytest.mark.parametrize("command", ["forward", "backward", "left", "right", "turn_l", "turn_r"])
+def test_operator_speed_does_not_drop_when_front_distance_crosses_slow_zone(mode, command):
+    common = dict(mode=mode, emergency_stop=False, detection="", manual_command=command,
+                  lane_offset=0, has_recent_detection=False, has_recent_manual=True,
+                  has_recent_lane=False, has_recent_scan=True, cruise_speed=.28,
+                  turn_speed=1.0, slow_speed=.12, speed_scale=.5,
+                  mode_obstacle_stop_distances={"manual": 0, "mapping": 0})
+    far = decide_motion(front_distance=2, **common)
+    near = decide_motion(front_distance=.2, **common)
+    assert near == far
+    assert max(abs(near[k]) for k in ("linear_x", "linear_y", "angular_z")) == pytest.approx(.5 if command.startswith("turn") else .14)
+
+
+def test_mapping_controller_enforces_fifty_percent_even_for_direct_topic_input():
+    common = dict(mode="mapping", emergency_stop=False, detection="", manual_command="forward",
+                  front_distance=2, lane_offset=0, has_recent_detection=False,
+                  has_recent_manual=True, has_recent_lane=False, cruise_speed=.28,
+                  turn_speed=1, speed_scale=1)
+    assert decide_motion(**common)["linear_x"] == pytest.approx(.14)
+    assert decide_motion(**{**common, "manual_command": "turn_l"})["angular_z"] == pytest.approx(.5)
+
+
+def test_automatic_proximity_slowdown_is_preserved():
+    common = dict(mode="auto", emergency_stop=False, detection="", manual_command="",
+                  lane_offset=0, has_recent_detection=True, has_recent_manual=False,
+                  has_recent_lane=False, cruise_speed=.28, slow_speed=.12, speed_scale=.5)
+    assert decide_motion(front_distance=2, **common)["linear_x"] == pytest.approx(.14)
+    assert decide_motion(front_distance=.6, **common)["linear_x"] == pytest.approx(.06)
+    assert decide_motion(front_distance=.2, **common)["linear_x"] == 0

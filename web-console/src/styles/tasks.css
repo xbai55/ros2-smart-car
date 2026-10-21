@@ -1,0 +1,21 @@
+.task-dialog { width: min(600px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow-y: auto; border: 1px solid #dbe1ea; border-radius: 16px; padding: 24px; background: #fff; color: #0f172a; box-shadow: 0 24px 80px #0f172a35; }
+.task-dialog::backdrop { background: #0f172a70; }
+.task-dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.task-dialog-heading h2 { margin: 0; font-size: 19px; }
+.task-form, .task-form fieldset { display: grid; gap: 16px; }
+.task-form fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.task-form label { display: grid; gap: 7px; font-size: 12px; font-weight: 600; color: #334155; }
+.task-form input, .task-form select, .task-form textarea { width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid #dbe1ea; border-radius: 8px; background: #fff; color: #0f172a; font: inherit; font-size: 13px; }
+.task-form input:focus, .task-form select:focus, .task-form textarea:focus { outline: 2px solid #93c5fd; outline-offset: 1px; border-color: #2563eb; }
+.task-form textarea { min-height: 74px; resize: vertical; }
+.task-form input:disabled, .task-form select:disabled, .task-form textarea:disabled { background: #f8fafc; color: #64748b; }
+.task-form-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.task-hint, .task-form small { margin: 0; font-size: 12px; color: #64748b; line-height: 1.65; font-weight: 400; }
+.task-form-actions { display: flex; justify-content: flex-end; gap: 10px; padding-top: 4px; }
+.task-error, .task-success { padding: 12px 14px; font-size: 13px; line-height: 1.65; border: 1px solid; border-radius: 8px; overflow-wrap: anywhere; }
+.task-error { color: #b91c1c; background: #fef2f2; border-color: #fecaca; }
+.task-success { color: #166534; background: #f0fdf4; border-color: #bbf7d0; }
+.task-success a { color: #2563eb; margin-left: 12px; text-decoration: underline; }
+.task-login { display: flex; justify-content: center; padding-bottom: 16px; }
+.task-profile strong { overflow-wrap: anywhere; white-space: pre-wrap; }
+@media (max-width: 520px) { .task-dialog { padding: 20px; } .task-form-row { grid-template-columns: minmax(0, 1fr); } }

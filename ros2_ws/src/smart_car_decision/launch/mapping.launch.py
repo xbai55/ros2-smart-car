@@ -3,10 +3,8 @@ from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
 
 
 def generate_launch_description():
@@ -15,7 +13,6 @@ def generate_launch_description():
 
     start_base = LaunchConfiguration("start_base_driver")
     start_lidar = LaunchConfiguration("start_lidar_driver")
-    publish_laser_tf = LaunchConfiguration("publish_laser_tf")
     use_sim_time = LaunchConfiguration("use_sim_time")
 
     bringup = IncludeLaunchDescription(
@@ -23,24 +20,13 @@ def generate_launch_description():
         launch_arguments={
             "start_base_driver": start_base,
             "start_lidar_driver": start_lidar,
+            "start_base_odom": LaunchConfiguration("start_base_odom"),
+            "start_robot_description": LaunchConfiguration("start_robot_description"),
+            "publish_scan_laser_tf": LaunchConfiguration("publish_laser_tf"),
+            **{name: LaunchConfiguration(name) for name in (
+                "base_frame", "laser_frame", "laser_x", "laser_y", "laser_z", "laser_yaw",
+            )},
         }.items(),
-    )
-
-    laser_tf = Node(
-        package="tf2_ros",
-        executable="static_transform_publisher",
-        name="base_to_laser_static_tf",
-        arguments=[
-            "--x", LaunchConfiguration("laser_x"),
-            "--y", LaunchConfiguration("laser_y"),
-            "--z", LaunchConfiguration("laser_z"),
-            "--roll", "0.0",
-            "--pitch", "0.0",
-            "--yaw", LaunchConfiguration("laser_yaw"),
-            "--frame-id", LaunchConfiguration("base_frame"),
-            "--child-frame-id", LaunchConfiguration("laser_frame"),
-        ],
-        condition=IfCondition(publish_laser_tf),
     )
 
     slam = IncludeLaunchDescription(
@@ -55,20 +41,21 @@ def generate_launch_description():
         [
             DeclareLaunchArgument("start_base_driver", default_value="true"),
             DeclareLaunchArgument("start_lidar_driver", default_value="true"),
+            DeclareLaunchArgument("start_base_odom", default_value="true"),
+            DeclareLaunchArgument("start_robot_description", default_value="true"),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
             DeclareLaunchArgument(
                 "publish_laser_tf",
-                default_value="false",
-                description="Enable only when the vendor URDF does not publish base_link to laser.",
+                default_value="true",
+                description="Publish one base_link to laser TF through bringup; disable when an external launch already owns this frame.",
             ),
             DeclareLaunchArgument("base_frame", default_value="base_link"),
             DeclareLaunchArgument("laser_frame", default_value="laser"),
-            DeclareLaunchArgument("laser_x", default_value="0.0"),
-            DeclareLaunchArgument("laser_y", default_value="0.0"),
-            DeclareLaunchArgument("laser_z", default_value="0.0"),
+            DeclareLaunchArgument("laser_x", default_value="0.0435"),
+            DeclareLaunchArgument("laser_y", default_value="0.00005258"),
+            DeclareLaunchArgument("laser_z", default_value="0.11"),
             DeclareLaunchArgument("laser_yaw", default_value="3.141592653589793"),
             bringup,
-            laser_tf,
             slam,
         ]
     )

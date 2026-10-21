@@ -33,6 +33,14 @@ class AnnotatedFrameStore:
                 return None
             return self._frame
 
+    def snapshot(self):
+        with self._condition:
+            age = time.monotonic() - self._updated_at
+            if not self._frame or age > min(self.max_age_sec, 0.5):
+                return None
+            return {"jpeg": self._frame, "sequence": self._version,
+                    "age_ms": round(age * 1000, 2)}
+
     def wait_for_frame(self, last_version=0, timeout=0.1, now=None):
         deadline = time.monotonic() + max(0.0, float(timeout))
         with self._condition:
@@ -42,6 +50,6 @@ class AnnotatedFrameStore:
                     break
                 self._condition.wait(remaining)
             now = time.monotonic() if now is None else float(now)
-            if not self._frame or now - self._updated_at > self.max_age_sec:
+            if self._version <= last_version or not self._frame or now - self._updated_at > self.max_age_sec:
                 return None, self._version
             return self._frame, self._version

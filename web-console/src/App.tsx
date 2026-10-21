@@ -12,10 +12,12 @@ import { SystemPage } from "./pages/system";
 import { AssetsPage } from "./pages/assets";
 import { SettingsPage } from "./pages/settings";
 import { EmptyState } from "./components/ui";
+import { SlamPage } from "./pages/slam";
 
 function renderRoute(path: string) {
   let params: Record<string, string> | null;
   if (path === "/") return <HomePage />;
+  if (path === "/slam") return <SlamPage />;
   if (path === "/robots") return <RobotsPage />;
   if ((params = matchRoute("/robots/:id/run", path))) return <RobotRunPage id={params.id} />;
   if ((params = matchRoute("/robots/:id", path))) return <RobotDetailPage id={params.id} />;
@@ -39,8 +41,12 @@ function renderRoute(path: string) {
 }
 
 export default function App() {
-  const path = usePath();
-  useEffect(() => { window.scrollTo(0, 0); }, [path]);
+  const requestedPath = usePath();
+  const path = requestedPath === "/radar" ? "/slam" : requestedPath;
+  useEffect(() => {
+    if (requestedPath === "/radar") window.location.replace("#/slam");
+    window.scrollTo(0, 0);
+  }, [requestedPath]);
   if (path === "/login") return <LoginPage />;
   return (
     <div className="app-root">

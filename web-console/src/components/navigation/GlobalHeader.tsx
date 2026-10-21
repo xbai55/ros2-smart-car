@@ -10,6 +10,8 @@ import {
   ListChecks,
   LogOut,
   Map as MapIcon,
+  Menu,
+  X,
   Search,
   Settings,
   ShieldCheck,
@@ -18,6 +20,8 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useData } from "../../hooks/useData";
 import { adapters } from "../../services/adapters";
+import { businessApi, clearBusinessSession } from "../../services/businessApi";
+import { useBusinessSession } from "../../hooks/useBusinessSession";
 import { uiStore } from "../../stores/uiStore";
 import type { Incident, MapObject, NotificationItem, Robot, Task } from "../../types/domain";
 import { cn } from "../../lib/cn";
@@ -35,13 +39,14 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { id: "workbench", label: "工作台", href: "/", icon: LayoutDashboard },
+  { id: "slam", label: "SLAM 建图", href: "/slam", icon: MapIcon },
   {
     id: "robots", label: "机器人", href: "/robots", icon: Bot,
     mega: {
-      title: "机器人", desc: "实验室巡检与运输车队的运行与调度",
+      title: "机器人", desc: "已配置的机器人连接与实时状态",
       items: [
         { label: "我的机器人", href: "/robots", desc: "查看全部在线与离线机器人" },
-        { label: "运行工作区", href: "/robots/r-001", desc: "进入 SLAM 地图与实时控制" },
+        { label: "运行工作区", href: "/robots/r-001/run", desc: "进入实时地图与手动控制" },
         { label: "遥测与日志", href: "/robots/r-001", desc: "传感器、位姿与节点健康" },
       ],
       footer: { label: "进入机器人中心", href: "/robots" },
@@ -54,7 +59,7 @@ const navItems: NavItem[] = [
       items: [
         { label: "巡检任务", href: "/tasks", desc: "实验室安全巡检计划与执行" },
         { label: "运输任务", href: "/tasks", desc: "文件取件、运输与交接流程" },
-        { label: "进行中", href: "/tasks/t-101", desc: "查看当前执行进度" },
+        { label: "进行中", href: "/tasks", desc: "查看当前执行进度" },
       ],
       footer: { label: "进入任务中心", href: "/tasks" },
     },
@@ -65,8 +70,8 @@ const navItems: NavItem[] = [
       title: "异常中心", desc: "AI 检测事件与人工处理闭环",
       items: [
         { label: "未处理", href: "/incidents", desc: "需要确认的告警" },
-        { label: "现场证据", href: "/incidents/i-301", desc: "图像、检测框与地图位置" },
-        { label: "处理时间线", href: "/incidents/i-302", desc: "确认、处置与关闭记录" },
+        { label: "现场证据", href: "/incidents", desc: "查看已保存的异常记录" },
+        { label: "处理时间线", href: "/incidents", desc: "确认、处置与关闭记录" },
       ],
       footer: { label: "进入异常中心", href: "/incidents" },
     },
@@ -78,7 +83,7 @@ const navItems: NavItem[] = [
       items: [
         { label: "地图列表", href: "/maps", desc: "管理建图成果与版本" },
         { label: "路线管理", href: "/routes", desc: "巡检与运输路线编辑" },
-        { label: "图层与对象", href: "/maps/m-001", desc: "地图详情与图层控制" },
+        { label: "图层与对象", href: "/maps", desc: "地图详情与图层控制" },
       ],
       footer: { label: "进入地图中心", href: "/maps" },
     },
@@ -89,7 +94,7 @@ const navItems: NavItem[] = [
       title: "数据洞察", desc: "任务、异常与机器人运行统计",
       items: [
         { label: "统计分析", href: "/analytics", desc: "巡检/运输/异常趋势" },
-        { label: "系统状态", href: "/system", desc: "资源与 ROS2 节点健康" },
+        { label: "系统状态", href: "/system", desc: "传感器与 ROS2 节点健康" },
       ],
       footer: { label: "进入数据中心", href: "/analytics" },
     },
@@ -110,7 +115,7 @@ const navItems: NavItem[] = [
     mega: {
       title: "系统", desc: "运行状态、安全与账户管理",
       items: [
-        { label: "系统状态", href: "/system", desc: "CPU / GPU / 网络 / ROS2 节点" },
+        { label: "系统状态", href: "/system", desc: "实车传感器与 ROS2 节点" },
         { label: "用户与角色", href: "/settings", desc: "RBAC 权限与账户" },
         { label: "审计日志", href: "/settings", desc: "关键操作留痕" },
       ],
@@ -122,14 +127,19 @@ const navItems: NavItem[] = [
 function BrandMark() {
   return (
     <Link to="/" className="brand" aria-label="InsightRover 智巡首页">
-      <img className="brand-logo" src="/brand/logo-mark.png" alt="InsightRover 智巡" />
+      <span className="brand-emblem"><img className="brand-logo" src="/brand/logo-transparent.png" alt="" width={1280} height={1280} /></span>
+      <span className="brand-wordmark" aria-hidden="true"><strong>智巡</strong><span>InsightRover</span></span>
     </Link>
   );
 }
 
 function NavigationMenu({ path }: { path: string }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => setOpen(false), [path]);
+  useEffect(() => { const close = (e: KeyboardEvent) => { if(e.key === "Escape") setOpen(false); }; window.addEventListener("keydown", close); return () => window.removeEventListener("keydown", close); }, []);
   return (
-    <nav className="main-nav" aria-label="一级业务导航">
+    <><button type="button" className="mobile-nav-toggle" aria-label={open ? "关闭导航" : "打开导航"} aria-expanded={open} aria-controls="primary-navigation" onClick={() => setOpen(v => !v)}>{open ? <X size={20}/> : <Menu size={20}/>}</button>
+    <nav id="primary-navigation" className={cn("main-nav", open && "mobile-open")} aria-label="一级业务导航">
       {navItems.map((item) => {
         const Icon = item.icon;
         const isActive = item.href === "/" ? path === "/" : path.startsWith(item.href);
@@ -168,15 +178,17 @@ function NavigationMenu({ path }: { path: string }) {
           </div>
         );
       })}
-    </nav>
+    </nav></>
   );
 }
 
 function GlobalSearch() {
+  const session = useBusinessSession();
   const open = uiStore.use().commandOpen;
   const setOpen = (value: boolean) => uiStore.set({ commandOpen: value });
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
   const [index, setIndex] = useState<{ robots: Robot[]; tasks: Task[]; maps: MapObject[]; incidents: Incident[] }>({ robots: [], tasks: [], maps: [], incidents: [] });
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -194,13 +206,19 @@ function GlobalSearch() {
 
   useEffect(() => {
     if (!open) { setQuery(""); return; }
-    setLoading(true);
-    Promise.all([adapters.listRobots(), adapters.listTasks(), adapters.listMaps(), adapters.listIncidents()])
-      .then(([robots, tasks, maps, incidents]) => setIndex({ robots, tasks, maps, incidents }))
-      .finally(() => setLoading(false));
+    let active = true;
+    setLoading(true); setError(""); setIndex({ robots: [], tasks: [], maps: [], incidents: [] });
+    Promise.allSettled([adapters.listRobots(), adapters.listTasks(), adapters.listMaps(), adapters.listIncidents()])
+      .then(([robots, tasks, maps, incidents]) => {
+        if (!active) return;
+        setIndex({ robots: robots.status === "fulfilled" ? robots.value : [], tasks: tasks.status === "fulfilled" ? tasks.value : [], maps: maps.status === "fulfilled" ? maps.value : [], incidents: incidents.status === "fulfilled" ? incidents.value : [] });
+        const failed = [robots, tasks, maps, incidents].find(r => r.status === "rejected");
+        if (failed?.status === "rejected") setError(`部分数据不可用：${failed.reason instanceof Error ? failed.reason.message : failed.reason}`);
+      })
+      .finally(() => { if (active) setLoading(false); });
     const t = window.setTimeout(() => inputRef.current?.focus(), 30);
-    return () => window.clearTimeout(t);
-  }, [open]);
+    return () => { active = false; window.clearTimeout(t); };
+  }, [open, session?.user.id]);
 
   const q = query.trim().toLowerCase();
   const groups = useMemo(() => {
@@ -225,6 +243,7 @@ function GlobalSearch() {
         </div>
         <div className="command-results">
           {loading ? <div className="command-hint">正在索引…</div> : null}
+          {error && <div className="command-hint" role="alert">{error}</div>}
           {!loading && !q && <div className="command-hint">输入关键词，或按方向浏览。支持 Ctrl/Cmd + K 快速唤起。</div>}
           <SearchGroup title="机器人" icon={Bot} rows={groups.robots.map((r) => ({ key: r.id, label: r.name, sub: r.zone, href: `/robots/${r.id}` }))} onPick={() => setOpen(false)} />
           <SearchGroup title="任务" icon={ListChecks} rows={groups.tasks.map((t) => ({ key: t.id, label: t.title, sub: t.robotName, href: `/tasks/${t.id}` }))} onPick={() => setOpen(false)} />
@@ -256,8 +275,41 @@ function SearchGroup({ title, icon: Icon, rows, onPick }: { title: string; icon:
 
 function NotificationCenter() {
   const open = uiStore.use().notificationsOpen;
-  const { data, loading } = useData(() => adapters.listNotifications());
-  const items = data ?? [];
+  const session = useBusinessSession();
+  const [items, setItems] = useState<NotificationItem[]>([]), [loading, setLoading] = useState(true), [error, setError] = useState('');
+  const [sound, setSound] = useState(false), [alert, setAlert] = useState<NotificationItem | null>(null);
+  const audio = useRef<AudioContext | null>(null), soundRef = useRef(false);
+  useEffect(() => { soundRef.current = sound; }, [sound]);
+  useEffect(() => {
+    let active = true, timer: ReturnType<typeof setTimeout>, seen: Set<string> | null = null;
+    setItems([]); setAlert(null); setError('');
+    const poll = async () => {
+      try {
+        const next = await adapters.listNotifications();
+        if (!active) return;
+        const fresh = seen ? next.filter(n => !seen!.has(n.id) && n.type === 'incident' && !n.read) : [];
+        seen = new Set(next.map(n => n.id));
+        setItems(next); setError('');
+        if (fresh.length) {
+          setAlert(fresh[0]);
+          if (soundRef.current && audio.current?.state === 'running') {
+            const context = audio.current, oscillator = context.createOscillator(), gain = context.createGain();
+            oscillator.frequency.value = 880; gain.gain.value = .12;
+            oscillator.connect(gain); gain.connect(context.destination); oscillator.start(); oscillator.stop(context.currentTime + .3);
+          }
+        }
+      } catch (e) { if (active) setError((e as Error).message); }
+      finally { if (active) { setLoading(false); timer = setTimeout(() => void poll(), 3000); } }
+    };
+    if (session) void poll(); else setLoading(false);
+    return () => { active = false; clearTimeout(timer); };
+  }, [session?.user.id]);
+  useEffect(() => () => { void audio.current?.close(); }, []);
+  async function toggleSound() {
+    if (sound) { setSound(false); return; }
+    try { audio.current ||= new AudioContext(); await audio.current.resume(); setSound(true); }
+    catch { setError('浏览器未允许播放声音，请检查站点声音权限'); }
+  }
   const unread = items.filter((n) => !n.read).length;
 
   const iconFor = (type: NotificationItem["type"]) => (type === "incident" ? AlertTriangle : type === "task" ? ListChecks : ShieldCheck);
@@ -265,6 +317,7 @@ function NotificationCenter() {
 
   return (
     <div className="tool">
+      {alert && <div role="alert" className="incident-live-alert"><Link to={alert.href} onClick={() => setAlert(null)}>{alert.title} · 查看现场</Link><button className="btn btn-outline" aria-label="关闭异常提示" onClick={() => setAlert(null)}>关闭</button></div>}
       <button type="button" className="tool-btn" aria-label="通知中心" onClick={() => uiStore.set({ notificationsOpen: !open, userMenuOpen: false })}>
         <Bell size={17} />
         {unread > 0 ? <span className="tool-badge">{unread}</span> : null}
@@ -275,15 +328,16 @@ function NotificationCenter() {
           <div className="popover notification-popover">
             <header className="popover-head">
               <strong>通知中心</strong>
-              <span>{unread} 条未读</span>
+              <span>{error || loading ? "—" : `${unread} 条未读`}</span>
             </header>
+            <button className="btn btn-outline" onClick={() => void toggleSound()}>{sound ? '关闭报警声音' : '启用报警声音'}</button>
             <div className="popover-body">
               {loading ? <div className="command-hint">加载中…</div> : null}
-              {!loading && items.length === 0 ? <div className="command-hint">暂无通知</div> : null}
+              {error ? <div className="command-hint">{error}</div> : !loading && items.length === 0 ? <div className="command-hint">暂无通知记录</div> : null}
               {items.map((n) => {
                 const Icon = iconFor(n.type);
                 return (
-                  <Link key={n.id} to={n.href} className="notification-row" onClick={() => uiStore.set({ notificationsOpen: false })}>
+                  <Link key={n.id} to={n.href} className="notification-row" onClick={() => { uiStore.set({ notificationsOpen: false }); void businessApi.markNotificationRead(n.id).then(() => setItems(old => old.map(i => i.id === n.id ? {...i, read: true} : i))).catch(e => setError((e as Error).message)); }}>
                     <span className={cn("notification-icon", `tone-${toneFor(n.type)}`)}><Icon size={15} /></span>
                     <span className="notification-copy">
                       <strong>{n.title}</strong>
@@ -307,11 +361,15 @@ function NotificationCenter() {
 
 function UserMenu() {
   const open = uiStore.use().userMenuOpen;
+  const session = useBusinessSession();
+  const name = session?.user.display_name || session?.user.username || "访客";
+  const role = session?.user.role?.name;
+  const roleName = role ? ({ admin: "管理员", operator: "操作员", auditor: "审计员", viewer: "只读账户" }[role] || role) : "未登录";
   return (
     <div className="tool">
       <button type="button" className="user-btn" aria-label="用户菜单" onClick={() => uiStore.set({ userMenuOpen: !open, notificationsOpen: false })}>
         <span className="avatar"><UserIcon size={15} /></span>
-        <span className="user-copy"><strong>陈老师</strong><em>管理员</em></span>
+        <span className="user-copy"><strong>{name}</strong><em>{roleName}</em></span>
         <ChevronDown size={14} />
       </button>
       {open ? (
@@ -320,7 +378,7 @@ function UserMenu() {
           <div className="popover user-popover">
             <div className="user-popover-head">
               <span className="avatar lg"><UserIcon size={18} /></span>
-              <div><strong>陈老师</strong><em>admin@insightrover</em></div>
+              <div><strong>{name}</strong><em>{session?.user.username || "请登录系统账户"}</em></div>
             </div>
             <div className="popover-body menu-list">
               <Link to="/settings" onClick={() => uiStore.set({ userMenuOpen: false })}><UserIcon size={15} />个人中心</Link>
@@ -329,7 +387,7 @@ function UserMenu() {
               <Link to="/settings" onClick={() => uiStore.set({ userMenuOpen: false })}><Clock size={15} />审计日志</Link>
             </div>
             <footer className="popover-foot menu-list">
-              <a href="#/login" onClick={() => uiStore.set({ userMenuOpen: false })}><LogOut size={15} />退出登录</a>
+              <a href="#/login" onClick={() => { clearBusinessSession(); uiStore.set({ userMenuOpen: false }); }}><LogOut size={15} />{session ? "退出登录" : "登录账户"}</a>
             </footer>
           </div>
         </>
@@ -362,4 +420,3 @@ export function GlobalHeader() {
     </header>
   );
 }
-

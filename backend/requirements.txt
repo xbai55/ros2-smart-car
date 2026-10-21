@@ -1,0 +1,13 @@
+fastapi==0.121.2
+uvicorn[standard]==0.38.0
+sqlalchemy==2.0.44
+pydantic==2.12.3
+httpx==0.28.1
+pytest==7.4.4
+Pillow>=10.3.0
+PyYAML>=6.0.2
+
+# 可选依赖：Redis 实时状态缓存与 MinIO 对象存储。
+# 未安装时后端自动降级为内存实时层（services/realtime.py）与本地文件存储（services/storage.py）。
+# redis==5.2.1
+# minio==7.2.13

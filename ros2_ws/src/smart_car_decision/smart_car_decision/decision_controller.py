@@ -5,11 +5,13 @@ import time
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, DurabilityPolicy
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, Float32, String
 
 from .common import front_range_statistic, normalize_command
 from .control_policy import decide_motion, normalize_mode
+from .mapping_settings import turn_speed
 
 
 class DecisionController(Node):
@@ -29,6 +31,9 @@ class DecisionController(Node):
         self.mode = "stop"
         self.emergency_stop = False
         self.speed_scale = 1.0
+        self.manual_turn_speed = .15
+        self.navigation_motion = None
+        self.last_navigation_time = 0.0
 
         self.publisher = self.create_publisher(Twist, self.cmd_vel_topic, 10)
         self.create_subscription(LaserScan, self.scan_topic, self.on_scan, 10)
@@ -38,7 +43,10 @@ class DecisionController(Node):
         self.create_subscription(String, self.mode_topic, self.on_mode, 10)
         self.create_subscription(Bool, self.emergency_stop_topic, self.on_emergency_stop, 10)
         self.create_subscription(Float32, self.speed_scale_topic, self.on_speed_scale, 10)
+        self.create_subscription(Float32, "/robot/turn_speed", self.on_turn_speed,
+                                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.create_subscription(String, self.mode_obstacle_stop_distance_topic, self.on_mode_obstacle_stop_distances, 10)
+        self.create_subscription(Twist, self.navigation_cmd_topic, self.on_navigation_command, 10)
         self.create_timer(1.0 / self.publish_rate_hz, self.control_loop)
 
         self.get_logger().info("Decision controller started")
@@ -49,6 +57,8 @@ class DecisionController(Node):
         self.declare_parameter("lane_offset_topic", "/lane/offset")
         self.declare_parameter("manual_cmd_topic", "/manual_cmd")
         self.declare_parameter("cmd_vel_topic", "/cmd_vel")
+        self.declare_parameter("navigation_cmd_topic", "/navigation/cmd_vel")
+        self.declare_parameter("navigation_timeout_sec", 0.5)
         self.declare_parameter("mode_topic", "/robot/mode")
         self.declare_parameter("emergency_stop_topic", "/robot/emergency_stop")
         self.declare_parameter("speed_scale_topic", "/robot/speed_scale")
@@ -76,6 +86,8 @@ class DecisionController(Node):
         self.lane_offset_topic = self.get_parameter("lane_offset_topic").value
         self.manual_cmd_topic = self.get_parameter("manual_cmd_topic").value
         self.cmd_vel_topic = self.get_parameter("cmd_vel_topic").value
+        self.navigation_cmd_topic = self.get_parameter("navigation_cmd_topic").value
+        self.navigation_timeout_sec = float(self.get_parameter("navigation_timeout_sec").value)
         self.mode_topic = self.get_parameter("mode_topic").value
         self.emergency_stop_topic = self.get_parameter("emergency_stop_topic").value
         self.speed_scale_topic = self.get_parameter("speed_scale_topic").value
@@ -139,13 +151,28 @@ class DecisionController(Node):
         self.last_manual_time = time.monotonic()
 
     def on_mode(self, msg):
+        if self.mode != normalize_mode(msg.data):
+            self.navigation_motion = None
+            self.last_navigation_time = 0.0
         self.mode = normalize_mode(msg.data)
+
+    def on_navigation_command(self, msg):
+        if self.mode != "navigation":
+            return
+        self.navigation_motion = {"linear_x": msg.linear.x, "linear_y": msg.linear.y, "angular_z": msg.angular.z}
+        self.last_navigation_time = time.monotonic()
 
     def on_emergency_stop(self, msg):
         self.emergency_stop = bool(msg.data)
 
     def on_speed_scale(self, msg):
         self.speed_scale = max(0.0, min(1.0, float(msg.data)))
+
+    def on_turn_speed(self, msg):
+        try:
+            self.manual_turn_speed = turn_speed(round(float(msg.data), 3))
+        except ValueError as exc:
+            self.get_logger().warning(str(exc))
 
     def on_mode_obstacle_stop_distances(self, msg):
         self.mode_obstacle_stop_distances = self._parse_mode_obstacle_stop_distances(msg.data)
@@ -173,6 +200,9 @@ class DecisionController(Node):
             lane_kp=self.lane_kp,
             max_angular_speed=self.max_angular_speed,
             speed_scale=self.speed_scale,
+            manual_turn_speed=self.manual_turn_speed,
+            navigation_motion=self.navigation_motion,
+            has_recent_navigation=now - self.last_navigation_time <= self.navigation_timeout_sec,
         )
         twist.linear.x = motion["linear_x"]
         twist.linear.y = motion["linear_y"]

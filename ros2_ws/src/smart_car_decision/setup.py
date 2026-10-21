@@ -10,7 +10,7 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
-        ("share/" + package_name + "/config", glob("config/*.yaml")),
+        ("share/" + package_name + "/config", glob("config/*.yaml") + glob("config/*.json")),
         ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
         ("share/" + package_name + "/models", glob("models/*.pt")),
         ("share/" + package_name + "/web/static", glob("web/static/*")),
@@ -34,6 +34,8 @@ setup(
             "system_status_node = smart_car_decision.system_status_node:main",
             "web_app_node = smart_car_decision.web_app_node:main",
             "map_asset = smart_car_decision.map_assets:main",
+            "patrol_executor = smart_car_decision.patrol_executor:main",
+            "mission_executor = smart_car_decision.mission_executor:main",
         ],
     },
 )

@@ -7,3 +7,29 @@ log/
 web-console/node_modules/
 web-console/dist/
 web-console/vite-dev*.log
+
+# Local test runs and generated application state
+.tmp_pytest*/
+pytest-cache-files-*/
+backend/*.db
+
+# Local application data, build deliveries and machine-specific configuration
+/output/
+/backend/storage/
+*.db-wal
+*.db-shm
+.env
+.env.*
+!.env.example
+*.log
+/rollback-*.patch
+
+# Downloaded/trained model weights are distributed separately from source
+*.pt
+*.onnx
+
+# STM32CubeIDE compiler intermediates (keep firmware images and ELF files)
+src/*/Debug/**/*.o
+src/*/Debug/**/*.d
+src/*/Debug/**/*.su
+src/*/Debug/**/*.cyclo

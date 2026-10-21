@@ -1,0 +1,9 @@
+{
+  "enabled": false,
+  "device": "0",
+  "rate_hz": 5,
+  "confirm_sec": 2,
+  "clear_sec": 10,
+  "models": [],
+  "corridors": []
+}

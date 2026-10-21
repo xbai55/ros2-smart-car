@@ -28,7 +28,10 @@ check_tf() {
 }
 
 check_topic /scan
+check_topic /odom_raw
+check_topic /imu/data
 check_topic /odom
+check_tf odom base_footprint
 check_tf odom base_link
 check_tf base_link "$laser_frame"
 

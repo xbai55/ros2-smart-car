@@ -7,18 +7,18 @@ export type Robot = {
   zone: string;
   health: RobotHealth;
   mode: string;
-  battery: number;
-  speed: number;
+  battery: number | null;
+  speed: number | null;
   frontDistance: number | null;
-  position: { x: number; y: number };
-  heading: number;
-  tasks: number;
-  incidents: number;
+  position: { x: number; y: number } | null;
+  heading: number | null;
+  tasks: number | null;
+  incidents: number | null;
   lastSeen: string;
 };
 
 export type TaskType = "patrol" | "transport";
-export type TaskStatus = "pending" | "running" | "paused" | "completed" | "failed";
+export type TaskStatus = "pending" | "running" | "paused" | "completed" | "failed" | "cancelled" | "queued" | "dispatched" | "transporting";
 export type TransportStage = "pickup" | "loading" | "transit" | "arrived" | "handover" | "done";
 
 export type Task = {
@@ -29,7 +29,7 @@ export type Task = {
   robotId: string | null;
   robotName: string;
   routeName: string;
-  progress: number;
+  progress: number | null;
   currentStep: string;
   createdAt: string;
   updatedAt: string;
@@ -45,7 +45,7 @@ export type Incident = {
   type: string;
   level: IncidentLevel;
   status: IncidentStatus;
-  confidence: number;
+  confidence: number | null;
   location: string;
   robotName: string;
   detectedAt: string;
@@ -56,8 +56,8 @@ export type MapObject = {
   id: string;
   name: string;
   area: string;
-  floors: number;
-  version: number;
+  floors: number | null;
+  version: number | null;
   updatedAt: string;
   status: "active" | "draft";
 };
@@ -67,9 +67,9 @@ export type RouteInfo = {
   name: string;
   mapId: string;
   mapName: string;
-  distance: number;
+  distance: number | null;
   waypoints: number;
-  version: number;
+  version: number | null;
   updatedAt: string;
 };
 
@@ -89,7 +89,7 @@ export type AuditEntry = {
   action: string;
   object: string;
   time: string;
-  result: "success" | "failure";
+  result: "success" | "failure" | null;
 };
 
 export type UserItem = {
@@ -105,7 +105,7 @@ export type RoleItem = {
   id: string;
   name: string;
   description: string;
-  users: number;
+  users: number | null;
   permissions: string[];
 };
 

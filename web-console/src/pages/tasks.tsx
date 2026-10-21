@@ -1,147 +1,162 @@
-import { ArrowLeft, CircleStop, ListChecks, Package, Pause, Play, RotateCcw } from "lucide-react";
-import { useState } from "react";
-import { Link, navigate } from "../lib/router";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Plus, RefreshCw, X } from "lucide-react";
+import { Link } from "../lib/router";
 import { useData } from "../hooks/useData";
-import { adapters } from "../services/adapters";
-import { MissionStepper } from "../components/task/MissionStepper";
-import { Badge, Button, EmptyState, Panel, ProgressBar, Tabs } from "../components/ui";
-import { DataTable, ObjectHeader, ObjectItem, SplitView, Timeline, type Column } from "../components/shared";
-import type { Task, TaskStatus, TaskType } from "../types/domain";
+import { useBusinessSession } from "../hooks/useBusinessSession";
+import { formatTime } from "../services/adapters";
+import { businessApi, type BusinessSession, type BusinessTask, type PatrolTaskInput } from "../services/businessApi";
+import { Badge, Button, EmptyState, Panel } from "../components/ui";
+import { DataTable, ObjectHeader, type Column } from "../components/shared";
+import type { TaskType } from "../types/domain";
+import "../styles/tasks.css";
+import { TaskExecutionControls } from "../components/robot/TaskExecutionControls";
 
-const statusMeta: Record<TaskStatus, { label: string; tone: "neutral" | "blue" | "warning" | "success" | "danger" }> = {
-  pending: { label: "待分配", tone: "neutral" },
-  running: { label: "进行中", tone: "blue" },
-  paused: { label: "已暂停", tone: "warning" },
-  completed: { label: "已完成", tone: "success" },
-  failed: { label: "失败", tone: "danger" },
-};
+type TaskRecord = BusinessTask & { type: TaskType };
+const labels: Record<string, string> = { pending: "待执行", running: "进行中", paused: "暂停", completed: "完成", failed: "失败", cancelled: "取消", queued: "排队中", dispatched: "已派发", transporting: "运输中" };
+const priorityLabels: Record<string, string> = { low: "低", normal: "普通", high: "高", urgent: "紧急" };
+const can = (session: BusinessSession, permission: string) => !!session.user.role?.permissions.some(item => item.name === permission);
+const typeLabel = (type: TaskType) => type === "patrol" ? "巡检" : "运输";
+
+async function loadTasks(session: BusinessSession): Promise<TaskRecord[]> {
+  const patrol = can(session, "patrol.read"), transport = can(session, "missions.read");
+  if (!patrol && !transport) throw new Error("当前账户没有任务查看权限");
+  const [patrols, missions] = await Promise.all([
+    patrol ? businessApi.listPatrolTasks() : Promise.resolve([]),
+    transport ? businessApi.listMissionTasks() : Promise.resolve([]),
+  ]);
+  return [...patrols.map(item => ({ ...item, type: "patrol" as const })), ...missions.map(item => ({ ...item, type: "transport" as const }))]
+    .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+}
+
+async function loadCatalog(session: BusinessSession) {
+  const [robots, maps, routes] = await Promise.allSettled([
+    can(session, "robots.read") ? businessApi.listRobots() : Promise.reject(new Error("当前账户没有机器人查看权限")),
+    can(session, "maps.read") ? businessApi.listMaps() : Promise.reject(new Error("当前账户没有地图查看权限")),
+    can(session, "routes.read") ? businessApi.listRoutes() : Promise.reject(new Error("当前账户没有路线查看权限")),
+  ]);
+  const problem = (result: PromiseSettledResult<unknown>) => result.status === "rejected" ? (result.reason instanceof Error ? result.reason.message : String(result.reason)) : "";
+  return {
+    robots: robots.status === "fulfilled" ? robots.value : [],
+    maps: maps.status === "fulfilled" ? maps.value : [],
+    routes: routes.status === "fulfilled" ? routes.value : [],
+    issues: { robots: problem(robots), maps: problem(maps), routes: problem(routes) },
+  };
+}
+
+function LoginNotice() {
+  return <div className="page"><ObjectHeader kicker="Tasks" title="任务中心" subtitle="创建并保存巡检和运输任务"/><Panel><EmptyState title="登录后管理任务" hint="请使用系统账户登录，任务将保存在业务数据库中。"/><div className="task-login"><Link className="btn btn-primary" to="/login?return=%2Ftasks">登录账户</Link></div></Panel></div>;
+}
 
 export function TasksPage() {
-  const { data, loading } = useData(() => adapters.listTasks());
-  const [type, setType] = useState<TaskType | "all">("all");
-  const [status, setStatus] = useState<TaskStatus | "all">("all");
+  const session = useBusinessSession();
+  return session ? <TaskList key={session.user.id} session={session}/> : <LoginNotice/>;
+}
 
-  const tasks = (data ?? []).filter((t) => (type === "all" || t.type === type) && (status === "all" || t.status === status));
-
-  const columns: Column<Task>[] = [
-    { key: "title", header: "任务", render: (t) => <div className="cell-strong"><strong>{t.title}</strong><em>{t.id}</em></div> },
-    { key: "type", header: "类型", render: (t) => <Badge tone={t.type === "patrol" ? "blue" : "info"}>{t.type === "patrol" ? "巡检" : "运输"}</Badge> },
-    { key: "robot", header: "机器人", render: (t) => t.robotName },
-    { key: "route", header: "路线", render: (t) => t.routeName },
-    { key: "status", header: "状态", render: (t) => <Badge tone={statusMeta[t.status].tone}>{statusMeta[t.status].label}</Badge> },
-    { key: "progress", header: "进度", render: (t) => <div className="cell-progress"><ProgressBar value={t.progress} /><span>{t.progress}%</span></div> },
-    { key: "time", header: "创建时间", render: (t) => t.createdAt },
+function TaskList({ session }: { session: BusinessSession }) {
+  const query = useData(() => loadTasks(session));
+  const [type, setType] = useState("all");
+  const [creating, setCreating] = useState(false);
+  const [saved, setSaved] = useState<TaskRecord | null>(null);
+  const allowed: TaskType[] = [];
+  if (can(session, "patrol.manage")) allowed.push("patrol");
+  if (can(session, "missions.manage")) allowed.push("transport");
+  const columns: Column<TaskRecord>[] = [
+    { key: "name", header: "任务", render: task => task.name },
+    { key: "type", header: "类型", render: task => typeLabel(task.type) },
+    { key: "robot", header: "关联机器人", render: task => task.robot_id || "未分配" },
+    { key: "status", header: "业务状态", render: task => labels[task.status] || task.status },
+    { key: "created", header: "创建时间", render: task => formatTime(task.created_at) },
   ];
+  return <div className="page">
+    <ObjectHeader kicker="Tasks" title="任务中心" subtitle="创建并保存业务任务，保存后可查看任务详情" actions={<>{allowed.length > 0 && <Button variant="primary" icon={Plus} onClick={() => { setSaved(null); setCreating(true); }}>新建任务</Button>}<Button icon={RefreshCw} disabled={query.loading} onClick={query.refetch}>刷新</Button></>}/>
+    {saved && <div className="task-success" role="status">任务“{saved.name}”已保存。{can(session, saved.type === "patrol" ? "patrol.read" : "missions.read") && <Link to={`/tasks/${saved.id}`}>查看详情</Link>}</div>}
+    {!allowed.length && <p className="task-hint">当前账户可查看任务，新建任务需要任务管理权限。</p>}
+    <Panel className="list-panel" bodyClassName="panel-flush">
+      <div className="list-toolbar"><div className="filter-tabs">{["all", "patrol", "transport"].map(value => <button key={value} className={type === value ? "on" : ""} onClick={() => setType(value)}>{value === "all" ? "全部" : value === "patrol" ? "巡检" : "运输"}</button>)}</div></div>
+      {query.error ? <EmptyState title="任务数据不可用" hint={query.error}/> : <DataTable columns={columns} rows={(query.data || []).filter(task => type === "all" || task.type === type)} rowKey={task => task.id} loading={query.loading} emptyTitle="暂无任务记录" onRowClick={task => { window.location.hash = `/tasks/${task.id}`; }}/>}
+    </Panel>
+    {creating && allowed.length > 0 && <CreateTaskDialog session={session} allowed={allowed} initialType={allowed.includes(type as TaskType) ? type as TaskType : allowed[0]} onClose={() => setCreating(false)} onSaved={task => { setCreating(false); setSaved(task); setType(task.type); query.refetch(); }}/>}
+  </div>;
+}
 
-  return (
-    <div className="page">
-      <ObjectHeader kicker="Tasks" title="任务中心" subtitle="巡检与文件运输任务的统一编排、执行与追踪" badges={[{ label: `${(data ?? []).filter((t) => t.status === "running").length} 进行中`, tone: "blue" }]} />
-      <Panel className="list-panel" bodyClassName="panel-flush">
-        <div className="list-toolbar">
-          <div className="filter-tabs">
-            {(["all", "patrol", "transport"] as const).map((t) => (
-              <button key={t} type="button" className={type === t ? "on" : ""} onClick={() => setType(t)}>{t === "all" ? "全部类型" : t === "patrol" ? "巡检" : "运输"}</button>
-            ))}
-          </div>
-          <div className="filter-tabs">
-            {(["all", "running", "pending", "paused", "completed", "failed"] as const).map((s) => (
-              <button key={s} type="button" className={status === s ? "on" : ""} onClick={() => setStatus(s)}>{s === "all" ? "全部状态" : statusMeta[s].label}</button>
-            ))}
-          </div>
+function CreateTaskDialog({ session, allowed, initialType, onClose, onSaved }: { session: BusinessSession; allowed: TaskType[]; initialType: TaskType; onClose: () => void; onSaved: (task: TaskRecord) => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const submitting = useRef(false);
+  const catalog = useData(() => loadCatalog(session));
+  const [type, setType] = useState(initialType);
+  const [name, setName] = useState(""), [description, setDescription] = useState("");
+  const [robotId, setRobotId] = useState(""), [mapId, setMapId] = useState(""), [routeId, setRouteId] = useState("");
+  const [targetArea, setTargetArea] = useState(""), [priority, setPriority] = useState<PatrolTaskInput["priority"]>("normal");
+  const [cargo, setCargo] = useState(""), [start, setStart] = useState(""), [end, setEnd] = useState(""), [pickupCode, setPickupCode] = useState("");
+  const [busy, setBusy] = useState(false), [error, setError] = useState("");
+  useEffect(() => { const element = dialog.current; element?.showModal(); return () => element?.close(); }, []);
+  const maps = (catalog.data?.maps || []).filter(map => map.active);
+  const routes = (catalog.data?.routes || []).filter(route => route.map_id === mapId);
+  function close() { if (!submitting.current) onClose(); }
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (submitting.current) return;
+    if (!name.trim()) { setError("请填写任务名称，不能只输入空格"); return; }
+    if (!allowed.includes(type)) { setError("当前账户没有此类任务的管理权限"); return; }
+    if (routeId && !routes.some(route => route.id === routeId)) { setError("所选路线不属于当前地图，请重新选择"); return; }
+    submitting.current = true; setBusy(true); setError("");
+    const common = { name: name.trim(), description: description.trim(), robot_id: robotId || null, map_id: mapId || null, route_id: routeId || null };
+    try {
+      const result = type === "patrol"
+        ? await businessApi.createPatrolTask({ ...common, target_area: targetArea.trim(), priority })
+        : await businessApi.createMissionTask({ ...common, cargo_name: cargo.trim(), start_location: start.trim(), end_location: end.trim(), pickup_code: pickupCode.trim() });
+      onSaved({ ...result, type });
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { submitting.current = false; setBusy(false); }
+  }
+  return <dialog ref={dialog} className="task-dialog" aria-labelledby="create-task-title" onCancel={event => { event.preventDefault(); close(); }}>
+    <div className="task-dialog-heading"><h2 id="create-task-title">新建任务</h2><Button variant="ghost" aria-label="关闭新建任务" disabled={busy} onClick={close} icon={X}/></div>
+    <form className="task-form" onSubmit={submit}>
+      <p className="task-hint">保存后可在任务中心查看。任务保存后不会自动启动机器人。</p>
+      <fieldset disabled={busy}>
+        <label>任务类型<select value={type} onChange={event => setType(event.target.value as TaskType)}>{allowed.map(value => <option key={value} value={value}>{typeLabel(value)}任务</option>)}</select></label>
+        <label>任务名称<input autoFocus required maxLength={128} value={name} placeholder={type === "patrol" ? "例如：实验室晚间巡检" : "例如：送文件到老师办公室"} onChange={event => setName(event.target.value)}/></label>
+        <label>说明<textarea value={description} placeholder="填写任务目的或注意事项" onChange={event => setDescription(event.target.value)}/></label>
+        <label>关联机器人（可选）<select value={robotId} disabled={catalog.loading || !!catalog.data?.issues.robots || !catalog.data?.robots.length} onChange={event => setRobotId(event.target.value)}><option value="">暂不分配</option>{catalog.data?.robots.map(robot => <option key={robot.id} value={robot.id}>{robot.name}{robot.robot_code ? `（${robot.robot_code}）` : ""}</option>)}</select><small>{catalog.loading ? "正在读取机器人档案…" : catalog.data?.issues.robots || (!catalog.data?.robots.length ? "暂无机器人档案，可先保存任务。" : "使用业务数据库中的机器人档案。")}</small></label>
+        <div className="task-form-row">
+          <label>关联地图（可选）<select value={mapId} disabled={catalog.loading || !!catalog.data?.issues.maps || !maps.length} onChange={event => { setMapId(event.target.value); setRouteId(""); }}><option value="">暂不关联</option>{maps.map(map => <option key={map.id} value={map.id}>{map.name}</option>)}</select></label>
+          <label>关联路线（可选）<select value={routeId} disabled={catalog.loading || !mapId || !!catalog.data?.issues.routes || !routes.length} onChange={event => setRouteId(event.target.value)}><option value="">暂不关联</option>{routes.map(route => <option key={route.id} value={route.id}>{route.name}</option>)}</select></label>
         </div>
-        <DataTable columns={columns} rows={tasks} rowKey={(t) => t.id} loading={loading} emptyTitle="暂无任务" onRowClick={(t) => { window.location.hash = `/tasks/${t.id}`; }} />
-      </Panel>
-    </div>
-  );
+        <p className="task-hint">{catalog.data?.issues.maps || catalog.data?.issues.routes || (mapId ? routes.length ? "仅显示所选地图的路线。" : "该地图暂无路线，可先保存任务。" : "选择地图后可关联该地图的路线。")}</p>
+        {type === "patrol" ? <div className="task-form-row"><label>巡检区域<input maxLength={128} value={targetArea} placeholder="例如：实验室一楼" onChange={event => setTargetArea(event.target.value)}/></label><label>优先级<select value={priority} onChange={event => setPriority(event.target.value as PatrolTaskInput["priority"])}>{Object.entries(priorityLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label></div> : <>
+          <label>运输物品<input value={cargo} placeholder="例如：实验报告" onChange={event => setCargo(event.target.value)}/></label>
+          <div className="task-form-row"><label>取件地点<input value={start} placeholder="例如：实验室门口" onChange={event => setStart(event.target.value)}/></label><label>送达地点<input value={end} placeholder="例如：老师办公室" onChange={event => setEnd(event.target.value)}/></label></div>
+          <label>取件码（可选）<input maxLength={32} value={pickupCode} onChange={event => setPickupCode(event.target.value)}/></label>
+        </>}
+      </fieldset>
+      {(error || catalog.error) && <div className="task-error" role="alert">{error || catalog.error}</div>}
+      <div className="task-form-actions"><Button disabled={busy} onClick={close}>取消</Button><Button type="submit" variant="primary" disabled={busy}>{busy ? "正在保存…" : "保存任务"}</Button></div>
+    </form>
+  </dialog>;
 }
 
 export function TaskDetailPage({ id }: { id: string }) {
-  const { data: task } = useData(() => adapters.getTask(id), [id]);
-  const tasksQuery = useData(() => adapters.listTasks());
-  const [tab, setTab] = useState("overview");
-  if (!task) return <div className="page"><EmptyState title="未找到该任务" /></div>;
-  const tasks = tasksQuery.data ?? [];
-
-  return (
-    <div className="page">
-      <Link to="/tasks" className="back-link"><ArrowLeft size={15} />任务中心</Link>
-      <ObjectHeader
-        kicker={`Task · ${task.id}`}
-        title={task.title}
-        subtitle={`${task.routeName} · ${task.robotName}`}
-        badges={[
-          { label: task.type === "patrol" ? "巡检" : "运输", tone: task.type === "patrol" ? "blue" : "info" },
-          { label: statusMeta[task.status].label, tone: statusMeta[task.status].tone },
-        ]}
-        actions={task.status === "running" ? <><Button size="sm" icon={Pause}>暂停</Button><Button size="sm" variant="danger" icon={CircleStop}>终止</Button></> : task.status === "paused" ? <Button size="sm" icon={Play}>恢复</Button> : null}
-      />
-      <SplitView railTitle="任务" railCount={tasks.length} rail={tasks.map((t) => (
-        <ObjectItem key={t.id} active={t.id === task.id} icon={t.type === "patrol" ? ListChecks : Package} title={t.title} meta={`${t.robotName} · ${t.routeName}`} badge={<Badge tone={statusMeta[t.status].tone}>{statusMeta[t.status].label}</Badge>} onClick={() => navigate(`/tasks/${t.id}`)} />
-      ))}>
-        <Tabs items={[{ id: "overview", label: "概览" }, { id: "exec", label: "执行" }, { id: "timeline", label: "时间线" }]} active={tab} onChange={setTab} />
-        {tab === "overview" ? <TaskOverview task={task} /> : null}
-        {tab === "exec" ? <TaskExec task={task} /> : null}
-        {tab === "timeline" ? <TaskTimeline task={task} /> : null}
-      </SplitView>
-    </div>
-  );
+  const session = useBusinessSession();
+  return session ? <TaskDetail key={`${session.user.id}:${id}`} id={id} session={session}/> : <LoginNotice/>;
 }
 
-function TaskOverview({ task }: { task: Task }) {
-  return (
-    <div className="workspace">
-      <div className="workspace-stats">
-        <div className="ws-stat"><em>任务编号</em><strong>{task.id}</strong></div>
-        <div className="ws-stat"><em>类型</em><strong>{task.type === "patrol" ? "安全巡检" : "文件运输"}</strong></div>
-        <div className="ws-stat"><em>执行机器人</em><strong>{task.robotName}</strong></div>
-        <div className="ws-stat"><em>路线</em><strong>{task.routeName}</strong></div>
-        <div className="ws-stat"><em>进度</em><strong>{task.progress}%</strong></div>
-      </div>
-      <div className="ws-section">
-        <div className="ws-section-title"><span>执行进度 · {task.currentStep}</span></div>
-        <ProgressBar value={task.progress} />
-      </div>
-      {task.type === "transport" ? (
-        <div className="ws-section">
-          <div className="ws-section-title"><span>运输流程</span></div>
-          <MissionStepper stage={task.transportStage} />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function TaskExec({ task }: { task: Task }) {
-  return (
-    <div className="ws-split ws-split-map">
-      <div className="ws-media-cell">
-        <div className="ws-section-title"><span>路线执行 · Route</span></div>
-        <div className="exec-placeholder">任务路线地图画布</div>
-      </div>
-      <div className="ws-section">
-        <div className="ws-section-title"><span>执行状态</span></div>
-        <div className="profile-list">
-          <div><em>状态</em><strong>{statusMeta[task.status].label}</strong></div>
-          <div><em>进度</em><strong>{task.progress}%</strong></div>
-          <div><em>当前步骤</em><strong>{task.currentStep}</strong></div>
-          {task.type === "transport" ? <div><em>运输阶段</em><strong>{task.transportStage ?? "--"}</strong></div> : null}
-        </div>
-        {task.type === "transport" ? <MissionStepper stage={task.transportStage} /> : null}
-      </div>
-    </div>
-  );
-}
-
-function TaskTimeline({ task }: { task: Task }) {
-  const entries = [
-    { id: "e1", title: "任务创建", time: task.createdAt, description: `已创建${task.type === "patrol" ? "巡检" : "运输"}任务并绑定路线 ${task.routeName}`, tone: "blue" as const },
-    { id: "e2", title: "任务分配", time: task.updatedAt, description: `分配给 ${task.robotName}`, tone: "neutral" as const },
-    { id: "e3", title: "执行中", time: "刚刚", description: task.currentStep, tone: task.status === "running" ? "success" as const : "neutral" as const },
-  ];
-  return (
-    <div className="workspace">
-      <div className="ws-section-title"><span>事件时间线</span></div>
-      <Timeline entries={entries} />
-    </div>
-  );
+function TaskDetail({ id, session }: { id: string; session: BusinessSession }) {
+  const { data: task, loading, error } = useData(async () => (await loadTasks(session)).find(item => item.id === id), [id]);
+  const catalog = useData(() => loadCatalog(session));
+  const robot = catalog.data?.robots.find(item => item.id === task?.robot_id);
+  const map = catalog.data?.maps.find(item => item.id === task?.map_id);
+  const route = catalog.data?.routes.find(item => item.id === task?.route_id);
+  return <div className="page"><Link to="/tasks" className="back-link">返回任务中心</Link>{loading ? <EmptyState title="加载中…"/> : error ? <EmptyState title="任务数据不可用" hint={error}/> : !task ? <EmptyState title="未找到该任务"/> : <>
+    <ObjectHeader kicker="Task" title={task.name} subtitle="实车任务按导航反馈更新；未派发任务可在地图工作区配置目标" badges={[{ label: `${typeLabel(task.type)}任务`, tone: "blue" }]}/>
+    <TaskExecutionControls task={task} kind={task.type === "patrol" ? "patrol" : "delivery"}/>
+    <Panel title="任务记录"><div className="profile-list task-profile">
+      <div><em>业务状态</em><strong><Badge>{labels[task.status] || task.status}</Badge></strong></div>
+      <div><em>关联机器人</em><strong>{robot?.name || task.robot_id || "未分配"}</strong></div>
+      <div><em>关联地图</em><strong>{map?.name || task.map_id || "未关联地图"}</strong></div>
+      <div><em>关联路线</em><strong>{route?.name || task.route_id || "未关联路线"}</strong></div>
+      {task.type === "patrol" ? <><div><em>巡检区域</em><strong>{task.target_area || "未填写"}</strong></div><div><em>优先级</em><strong>{priorityLabels[task.priority || ""] || task.priority || "未记录"}</strong></div></> : <><div><em>运输物品</em><strong>{task.cargo_name || "未填写"}</strong></div><div><em>取件地点</em><strong>{task.start_location || "未填写"}</strong></div><div><em>送达地点</em><strong>{task.end_location || "未填写"}</strong></div><div><em>取件码</em><strong>{task.pickup_code || "未设置"}</strong></div></>}
+      <div><em>业务记录进度</em><strong>{task.progress == null ? "未记录" : task.progress + "%"}</strong></div>
+      <div><em>创建时间</em><strong>{formatTime(task.created_at)}</strong></div><div><em>更新时间</em><strong>{formatTime(task.updated_at)}</strong></div><div><em>说明</em><strong>{task.description || "未填写"}</strong></div>
+    </div></Panel>
+  </>}</div>;
 }

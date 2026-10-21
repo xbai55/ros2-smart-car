@@ -12,6 +12,7 @@ import { StatusCard } from "../components/StatusCard";
 import { SystemSummaryPanel } from "../components/SystemSummaryPanel";
 import { baseStatusCards, modes, type ModeId } from "../data/consoleData";
 import { useRobotState } from "../useRobotState";
+import { MAPPING_SPEED_MAX } from "../liveControl";
 
 function isModeId(mode: string): mode is ModeId {
   return modes.some((item) => item.id === mode);
@@ -52,8 +53,8 @@ function RosConsoleApp() {
   const invoke = (promise: Promise<unknown>) => { void promise.catch(() => undefined); };
 
   useEffect(() => {
-    if (currentMode === "mapping" && robot.status.speed_scale > 0.25) {
-      void robot.setSpeed(0.25).catch(() => undefined);
+    if (currentMode === "mapping" && robot.status.speed_scale > MAPPING_SPEED_MAX / 100) {
+      void robot.setSpeed(MAPPING_SPEED_MAX / 100).catch(() => undefined);
     }
   }, [currentMode, robot, robot.status.speed_scale]);
 

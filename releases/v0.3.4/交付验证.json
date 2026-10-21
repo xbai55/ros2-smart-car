@@ -1,0 +1,12 @@
+{
+  "version": "0.3.4",
+  "desktop_tests_passed": 26,
+  "program_and_installer_icon_sizes_verified": 7,
+  "shortcut_icon_explicit": true,
+  "frozen_exe_acceptance": "passed",
+  "installer_reinstall_this_release": false,
+  "vehicle_patches_deployed_to_current_car": true,
+  "physical_driving_acceptance": false,
+  "installer_size_bytes": 34699160,
+  "installer_sha256": "726cfdfd8a5af2da641f6895535dddd4fa1d6a8ec8f2cabc709a0786616b7b7a"
+}

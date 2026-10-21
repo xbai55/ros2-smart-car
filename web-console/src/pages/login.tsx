@@ -1,15 +1,23 @@
 import { ArrowRight, Lock, ShieldCheck, User } from "lucide-react";
 import { useState } from "react";
 import { navigate } from "../lib/router";
+import { businessApi } from "../services/businessApi";
 
 export function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  const submit = () => {
-    setLoading(true);
-    window.setTimeout(() => navigate("/"), 320);
+  const submit = async () => {
+    if (loading) return;
+    setLoading(true); setError("");
+    try {
+      await businessApi.login(username.trim(), password);
+      const requested = new URLSearchParams(window.location.hash.split("?")[1] || "").get("return");
+      navigate(requested?.startsWith("/maps") ? requested : "/");
+    } catch (e) { setError((e as Error).message); }
+    finally { setLoading(false); }
   };
 
   return (
@@ -30,24 +38,25 @@ export function LoginPage() {
       </div>
 
       <div className="login-panel">
-        <div className="login-form">
+        <form className="login-form" onSubmit={e => { e.preventDefault(); void submit(); }}>
           <h1>登录</h1>
           <p className="login-sub">使用你的系统账户进入工作台</p>
           <label className="login-field">
             <span>用户名</span>
-            <div className="login-input"><User size={15} /><input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="admin" /></div>
+            <div className="login-input"><User size={15} /><input required autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="admin" /></div>
           </label>
           <label className="login-field">
             <span>密码</span>
-            <div className="login-input"><Lock size={15} /><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" /></div>
+            <div className="login-input"><Lock size={15} /><input required autoComplete="current-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" /></div>
           </label>
-          <button type="button" className="login-submit" onClick={submit} disabled={loading}>
+          {error && <p role="alert" className="map-error">{error}</p>}
+          <button type="submit" className="login-submit" disabled={loading}>
             {loading ? "正在进入…" : "进入工作台"} {!loading ? <ArrowRight size={16} /> : null}
           </button>
           <div className="login-foot">
             <span><ShieldCheck size={13} />安全链路由车端 decision_controller 独立仲裁</span>
           </div>
-        </div>
+        </form>
       </div>
     </div>
   );

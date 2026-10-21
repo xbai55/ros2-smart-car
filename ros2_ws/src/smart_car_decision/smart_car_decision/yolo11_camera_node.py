@@ -1,4 +1,6 @@
 import json
+import os
+import sys
 import time
 from pathlib import Path
 
@@ -72,6 +74,7 @@ class Yolo11CameraNode(Node):
 
     def _declare_parameters(self):
         self.declare_parameter("camera_source", "0")
+        self.declare_parameter("camera_fourcc", "MJPG")
         self.declare_parameter("camera_width", 640)
         self.declare_parameter("camera_height", 480)
         self.declare_parameter("camera_fps", 30.0)
@@ -117,6 +120,7 @@ class Yolo11CameraNode(Node):
 
     def _load_parameters(self):
         self.camera_source = str(self.get_parameter("camera_source").value)
+        self.camera_fourcc = str(self.get_parameter("camera_fourcc").value)
         self.camera_width = int(self.get_parameter("camera_width").value)
         self.camera_height = int(self.get_parameter("camera_height").value)
         self.camera_fps = float(self.get_parameter("camera_fps").value)
@@ -390,7 +394,12 @@ class Yolo11CameraNode(Node):
         return priorities.get(command, 0)
 
     def _open_camera(self):
-        self.camera = self.cv2.VideoCapture(self._parse_camera_source(self.camera_source))
+        parsed_source = self._parse_camera_source(self.camera_source)
+        local = isinstance(parsed_source, int) or os.path.realpath(str(parsed_source)).startswith('/dev/video')
+        self.camera = (self.cv2.VideoCapture(parsed_source, self.cv2.CAP_V4L2)
+                       if local and sys.platform.startswith('linux') else self.cv2.VideoCapture(parsed_source))
+        if local and self.camera_fourcc:
+            self.camera.set(self.cv2.CAP_PROP_FOURCC, self.cv2.VideoWriter_fourcc(*self.camera_fourcc[:4]))
         if self.camera_width > 0:
             self.camera.set(self.cv2.CAP_PROP_FRAME_WIDTH, self.camera_width)
         if self.camera_height > 0:

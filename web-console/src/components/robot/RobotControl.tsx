@@ -1,5 +1,7 @@
 import { ArrowRight, CircleStop, Gamepad2, Navigation, OctagonAlert, Route } from "lucide-react";
 import { cn } from "../../lib/cn";
+import { useEffect, useState } from "react";
+import { MAPPING_SPEED_MAX } from "../../liveControl";
 
 type Props = {
   connected: boolean;
@@ -20,6 +22,8 @@ const QUICK_MODES = [
 ];
 
 export function RobotControl({ connected, mode, emergency, speed, onMode, onEmergency, onSpeed, onEnterFull }: Props) {
+  const [draft, setDraft] = useState(speed);
+  useEffect(() => setDraft(speed), [speed]);
   return (
     <div className="quick-control">
       <div className="qc-row">
@@ -29,7 +33,7 @@ export function RobotControl({ connected, mode, emergency, speed, onMode, onEmer
             <button
               key={m.id}
               type="button"
-              disabled={!connected}
+              disabled={!connected || (emergency && m.id !== "stop")}
               className={cn("qc-mode", mode === m.id && "active")}
               onClick={() => onMode(m.id)}
             >
@@ -41,8 +45,9 @@ export function RobotControl({ connected, mode, emergency, speed, onMode, onEmer
       </div>
       <div className="qc-row qc-bottom">
         <label className="qc-speed">
-          <span>速度 {speed}%</span>
-          <input type="range" min={0} max={100} value={speed} disabled={!connected} onChange={(e) => onSpeed(Number(e.target.value))} />
+          <span>速度 {draft}% · 已生效 {connected ? speed + "%" : "—"}</span>
+          <input aria-label="快速控制速度" type="range" min={15} max={mode === "mapping" ? MAPPING_SPEED_MAX : 100} value={draft} disabled={!connected} onChange={(e) => setDraft(Number(e.target.value))} />
+          <button className="setting-apply" disabled={!connected} onClick={() => onSpeed(draft)}>应用速度</button>
         </label>
         <button type="button" disabled={!connected} className={cn("qc-emergency", emergency && "active")} onClick={onEmergency}>
           <OctagonAlert size={16} />

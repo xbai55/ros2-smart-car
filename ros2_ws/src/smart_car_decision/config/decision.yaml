@@ -15,7 +15,7 @@ decision_controller:
     front_distance_percentile: 20.0
     obstacle_stop_distance: 0.45
     obstacle_slow_distance: 0.75
-    mode_obstacle_stop_distances: {"stop": 0.0, "manual": 0.0, "auto": 0.45, "mapping": 0.0, "navigation": 0.45, "color_track": 0.45, "object_follow": 0.45}
+    mode_obstacle_stop_distances: '{"stop": 0.0, "manual": 0.0, "auto": 0.45, "mapping": 0.0, "navigation": 0.45, "color_track": 0.45, "object_follow": 0.45}'
     cruise_speed: 0.28
     slow_speed: 0.12
     turn_speed: 1.0
@@ -46,6 +46,7 @@ tcp_command_bridge:
 yolo11_camera_node:
   ros__parameters:
     camera_source: "0"
+    camera_fourcc: MJPG
     camera_width: 640
     camera_height: 480
     camera_fps: 30.0
@@ -148,8 +149,18 @@ web_app_node:
     speed_scale_topic: /robot/speed_scale
     mode_obstacle_stop_distance_topic: /robot/mode_obstacle_stop_distances
     color_config_topic: /vision/color_config
+    tracking_target_set_topic: /vision/tracking_target/set
     annotated_frame_topic: /vision/annotated_frame
+    patrol_task_topic: /patrol_task/set
+    mission_task_topic: /mission_task/set
+    patrol_progress_topic: /patrol_task/progress
+    mission_state_topic: /mission_task/state
     camera_source: "0"
     video_fps: 30.0
-    video_target_fps: 20.0
+    video_fourcc: MJPG
+    video_width: 1280
+    video_height: 720
+    video_target_fps: 12.0
+    video_jpeg_quality: 75
+    video_stream_width: 960
     annotated_stream_fps: 20.0

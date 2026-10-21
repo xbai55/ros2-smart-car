@@ -4,8 +4,9 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
@@ -29,7 +30,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "start_base_odom",
                 default_value="true",
-                description="Start Yahboom base odometry node and remap odom_raw to /odom.",
+                description="Start raw chassis odometry and the IMU/EKF localization chain together. Disable when an external bringup owns this chain.",
             ),
             DeclareLaunchArgument(
                 "start_robot_description",
@@ -40,6 +41,15 @@ def generate_launch_description():
                 "publish_scan_laser_tf",
                 default_value="true",
                 description="Publish base_link to laser alias TF matching /scan frame_id.",
+            ),
+            DeclareLaunchArgument("base_frame", default_value="base_link"),
+            DeclareLaunchArgument("laser_frame", default_value="laser"),
+            DeclareLaunchArgument("laser_x", default_value="0.0435"),
+            DeclareLaunchArgument("laser_y", default_value="0.00005258"),
+            DeclareLaunchArgument("laser_z", default_value="0.11"),
+            DeclareLaunchArgument(
+                "laser_yaw", default_value="3.141592653589793",
+                description="A1 vendor mounting yaw candidate in radians. Confirm front/side obstacles while stationary before movement acceptance.",
             ),
             ExecuteProcess(
                 cmd=["ros2", "run", "yahboomcar_bringup", "Mcnamu_driver_X3"],
@@ -56,7 +66,7 @@ def generate_launch_description():
                     "sllidar_launch.py",
                     "serial_port:=/dev/rplidar",
                     "serial_baudrate:=115200",
-                    "frame_id:=laser",
+                    ["frame_id:=", LaunchConfiguration("laser_frame")],
                 ],
                 name="sllidar_driver",
                 output="screen",
@@ -70,13 +80,32 @@ def generate_launch_description():
                 output="screen",
                 parameters=[
                     {
-                        "pub_odom_tf": True,
+                        "pub_odom_tf": False,
                         "linear_scale_x": 1.0,
                         "linear_scale_y": 1.0,
                         "angular_scale": 1.0,
                     }
                 ],
-                remappings=[("odom_raw", "odom")],
+                condition=IfCondition(LaunchConfiguration("start_base_odom")),
+            ),
+            Node(
+                package="imu_filter_madgwick",
+                executable="imu_filter_madgwick_node",
+                name="imu_filter_madgwick",
+                output="screen",
+                # Reuse the installed vendor calibration, with no joystick or velocity publisher.
+                parameters=[PathJoinSubstitution([
+                    FindPackageShare("yahboomcar_bringup"), "param", "imu_filter_param.yaml",
+                ])],
+                condition=IfCondition(LaunchConfiguration("start_base_odom")),
+            ),
+            Node(
+                package="robot_localization",
+                executable="ekf_node",
+                name="ekf_filter_node",
+                output="screen",
+                parameters=[str(pkg_share / "config" / "ekf_x1_x3.yaml")],
+                remappings=[("odometry/filtered", "odom")],
                 condition=IfCondition(LaunchConfiguration("start_base_odom")),
             ),
             Node(
@@ -93,14 +122,14 @@ def generate_launch_description():
                 name="base_to_scan_laser_static_tf",
                 output="screen",
                 arguments=[
-                    "--x", "0.0435",
-                    "--y", "0.0",
-                    "--z", "0.11",
+                    "--x", LaunchConfiguration("laser_x"),
+                    "--y", LaunchConfiguration("laser_y"),
+                    "--z", LaunchConfiguration("laser_z"),
                     "--roll", "0.0",
                     "--pitch", "0.0",
-                    "--yaw", "0.0",
-                    "--frame-id", "base_link",
-                    "--child-frame-id", "laser",
+                    "--yaw", LaunchConfiguration("laser_yaw"),
+                    "--frame-id", LaunchConfiguration("base_frame"),
+                    "--child-frame-id", LaunchConfiguration("laser_frame"),
                 ],
                 condition=IfCondition(LaunchConfiguration("publish_scan_laser_tf")),
             ),

@@ -8,4 +8,6 @@ def test_web_camera_capture_fps_matches_uvc_mode_and_output_is_separate():
     params = yaml.safe_load(config_path.read_text(encoding="utf-8-sig"))["web_app_node"]["ros__parameters"]
 
     assert params["video_fps"] == 30.0
-    assert params["video_target_fps"] == 20.0
+    assert params["video_target_fps"] == 12.0
+    assert params["video_jpeg_quality"] == 75
+    assert params["video_stream_width"] == 960

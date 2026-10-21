@@ -4,6 +4,7 @@ import time
 
 import rclpy
 from nav_msgs.msg import OccupancyGrid, Odometry
+from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, Float32, String
@@ -17,6 +18,7 @@ from .mapping_quality import evaluate_mapping_quality
 from .odom_health import evaluate_odom_health
 from .scan_visualization import simplify_scan_points
 from .tf_health import evaluate_tf_health
+from .mapping_settings import turn_speed
 
 
 class SystemStatusNode(Node):
@@ -117,6 +119,7 @@ class SystemStatusNode(Node):
                 "issues": ["lidar", "map", "odom", "tf"],
             },
             "speed_scale": 1.0,
+            "manual_turn_speed": .15,
             "camera": {"ok": None, "message": "unknown"},
             "nodes": {"system_status_node": "ok"},
             "updated_at": time.time(),
@@ -126,12 +129,14 @@ class SystemStatusNode(Node):
         self.create_subscription(String, self.get_parameter("mode_topic").value, self.on_mode, 10)
         self.create_subscription(Bool, self.get_parameter("emergency_stop_topic").value, self.on_estop, 10)
         self.create_subscription(Float32, self.get_parameter("speed_scale_topic").value, self.on_speed_scale, 10)
+        self.create_subscription(Float32, "/robot/turn_speed", self.on_turn_speed,
+                                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.create_subscription(LaserScan, self.get_parameter("scan_topic").value, self.on_scan, 10)
         self.create_subscription(String, self.get_parameter("detection_topic").value, self.on_detection, 10)
         self.create_subscription(String, self.get_parameter("color_target_topic").value, self.on_color_target, 10)
         self.create_subscription(String, self.get_parameter("tracking_target_topic").value, self.on_tracking_target, 10)
         self.create_subscription(Float32, self.get_parameter("lane_offset_topic").value, self.on_lane_offset, 10)
-        self.create_subscription(OccupancyGrid, self.get_parameter("map_topic").value, self.on_map, 10)
+        self.create_subscription(OccupancyGrid, self.get_parameter("map_topic").value, self.on_map, QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL, reliability=ReliabilityPolicy.RELIABLE))
         self.create_subscription(Odometry, self.get_parameter("odom_topic").value, self.on_odom, 10)
         self.create_subscription(Twist, self.get_parameter("cmd_vel_topic").value, self.on_cmd_vel, 10)
         self.tf_buffer = Buffer()
@@ -159,6 +164,7 @@ class SystemStatusNode(Node):
         self.odom_frame_id = ""
         self.odom_child_frame_id = ""
         self.odom_linear_speed = 0.0
+        self.odom_linear_speed_xy = 0.0
         self.odom_angular_speed = 0.0
         self.cmd_vel_linear_x = 0.0
         self.cmd_vel_linear_y = 0.0
@@ -187,6 +193,13 @@ class SystemStatusNode(Node):
     def on_speed_scale(self, msg):
         self.state["speed_scale"] = round(float(msg.data), 3)
         self._touch()
+
+    def on_turn_speed(self, msg):
+        try:
+            self.state["manual_turn_speed"] = turn_speed(round(float(msg.data), 3))
+            self._touch()
+        except ValueError:
+            pass
 
     def on_scan(self, scan):
         now = time.monotonic()
@@ -245,6 +258,7 @@ class SystemStatusNode(Node):
         self.odom_frame_id = str(msg.header.frame_id)
         self.odom_child_frame_id = str(msg.child_frame_id)
         self.odom_linear_speed = float(msg.twist.twist.linear.x)
+        self.odom_linear_speed_xy = math.hypot(self.odom_linear_speed, float(msg.twist.twist.linear.y))
         self.odom_angular_speed = float(msg.twist.twist.angular.z)
         self._refresh_odom(self.last_odom_time)
         self._touch()
@@ -273,18 +287,21 @@ class SystemStatusNode(Node):
     def refresh_tf_status(self):
         checked_at = time.time()
         try:
-            self.tf_buffer.lookup_transform(
+            transform = self.tf_buffer.lookup_transform(
                 self.tf_parent_frame,
                 self.tf_child_frame,
                 rclpy.time.Time(),
             )
+            stamp = transform.header.stamp
+            tf_age = max(0., (self.get_clock().now().nanoseconds - stamp.sec * 1_000_000_000 - stamp.nanosec) / 1e9)
             self.last_tf_status = evaluate_tf_health(
-                ok=True,
-                message="ok",
+                ok=tf_age <= 1.5,
+                message="ok" if tf_age <= 1.5 else "stale",
                 checked_at=checked_at,
                 parent_frame=self.tf_parent_frame,
                 child_frame=self.tf_child_frame,
             )
+            self.last_tf_status["age_sec"] = round(tf_age, 3)
             self._refresh_map_pose(checked_at)
         except TransformException as exc:
             self.last_tf_status = evaluate_tf_health(
@@ -294,6 +311,7 @@ class SystemStatusNode(Node):
                 parent_frame=self.tf_parent_frame,
                 child_frame=self.tf_child_frame,
             )
+            self.last_tf_status["age_sec"] = None
 
     def _refresh_map_pose(self, checked_at):
         try:
@@ -319,9 +337,12 @@ class SystemStatusNode(Node):
         siny_cosp = 2.0 * (rotation.w * rotation.z + rotation.x * rotation.y)
         cosy_cosp = 1.0 - 2.0 * (rotation.y * rotation.y + rotation.z * rotation.z)
         translation = transform.transform.translation
+        stamp = transform.header.stamp
+        pose_age = max(0., (self.get_clock().now().nanoseconds - stamp.sec * 1_000_000_000 - stamp.nanosec) / 1e9)
         self.state["map_pose"] = {
-            "ok": True,
-            "message": "ok",
+            "ok": pose_age <= 1.5,
+            "message": "ok" if pose_age <= 1.5 else "stale",
+            "age_sec": round(pose_age, 3),
             "x": round(float(translation.x), 4),
             "y": round(float(translation.y), 4),
             "yaw": round(math.atan2(siny_cosp, cosy_cosp), 4),
@@ -363,6 +384,7 @@ class SystemStatusNode(Node):
             linear_speed=self.odom_linear_speed,
             angular_speed=self.odom_angular_speed,
         )
+        self.state["odom"]["linear_speed_xy"] = self.odom_linear_speed_xy
 
     def _refresh_cmd_vel(self, now):
         if self.last_cmd_vel_time is None:

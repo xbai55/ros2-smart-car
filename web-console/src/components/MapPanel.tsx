@@ -45,6 +45,7 @@ import {
   type TfHealth,
 } from "../robotApi";
 import { HudPanel } from "./HudPanel";
+import { MAPPING_SPEED_MAX } from "../liveControl";
 
 type MapPanelProps = {
   map: MapHealth;
@@ -84,7 +85,7 @@ function qualityLabel(map: MapHealth, lidar: LidarHealth, speed: number, noiseRa
   if (!map.ok || !lidar.ok) {
     return { tone: "bad" as QualityTone, text: "风险", detail: "SCAN/MAP 状态异常" };
   }
-  if (speed > 25) {
+  if (speed > MAPPING_SPEED_MAX) {
     return { tone: "warn" as QualityTone, text: "一般", detail: "建图速度偏高" };
   }
   if (noiseRatio != null && noiseRatio > 0.18) {
@@ -271,7 +272,7 @@ export function MapPanel({
   const updatedAge = snapshot ? Math.max(0, Date.now() / 1000 - snapshot.updated_at) : null;
   const noiseRatio = snapshot ? calculateNoiseRatio(cells, width, height) : null;
   const quality = qualityLabel(map, lidar, speed, noiseRatio);
-  const speedOk = speed <= 25;
+  const speedOk = speed <= MAPPING_SPEED_MAX;
   const restartBlocked = !lidar.ok || !odom.ok || !tf.ok;
   const restartBlockReason = [
     !lidar.ok ? "SCAN" : "",
@@ -330,7 +331,7 @@ export function MapPanel({
         <span>低速前进</span>
         <span>小角度转向</span>
         <span>停止等待地图更新</span>
-        {speedOk ? <b>速度正常</b> : <b className="warn">速度过高，建议降到 25% 以下</b>}
+        {speedOk ? <b>速度正常</b> : <b className="warn">速度过高，请降到 {MAPPING_SPEED_MAX}% 以下</b>}
       </div>
 
       <div className="map-canvas" role="img" aria-label="SLAM 二维占据栅格地图">

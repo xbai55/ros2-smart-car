@@ -8,7 +8,7 @@ def evaluate_mapping_quality(*, lidar, map_status, odom, tf_status, speed_scale)
         issues.append("odom")
     if not tf_status.get("ok", False):
         issues.append("tf")
-    if float(speed_scale) > 0.25:
+    if float(speed_scale) > 0.5:
         issues.append("speed")
 
     if not issues:

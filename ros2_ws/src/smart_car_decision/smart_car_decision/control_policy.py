@@ -1,3 +1,5 @@
+import math
+
 VALID_MODES = {
     "stop",
     "manual",
@@ -19,6 +21,9 @@ VALID_MANUAL_COMMANDS = {
     "turn_right",
     "stop",
 }
+
+# 只有这两个模式接受手动控制意图；模式仲裁本身仍由 decision_controller / mode_manager 负责。
+MANUAL_COMMAND_MODES = {"manual", "mapping"}
 
 
 def zero_motion():
@@ -68,6 +73,9 @@ def decide_motion(
     lane_kp=0.9,
     max_angular_speed=1.2,
     speed_scale=1.0,
+    manual_turn_speed=None,
+    navigation_motion=None,
+    has_recent_navigation=False,
 ):
     mode = normalize_mode(mode)
     detection = str(detection or "").strip().lower().replace("-", "_").replace(" ", "_")
@@ -75,24 +83,54 @@ def decide_motion(
 
     if emergency_stop or mode == "stop":
         return zero_motion()
-    if mode in {"auto", "color_track", "object_follow", "mapping"} and not has_recent_scan:
+    if mode in {"auto", "color_track", "object_follow", "mapping", "navigation"} and not has_recent_scan:
         return zero_motion()
     active_stop_distance = _mode_obstacle_stop_distance(mode, obstacle_stop_distance, mode_obstacle_stop_distances)
     if active_stop_distance > 0.0 and front_distance <= active_stop_distance:
         return zero_motion()
-    if mode == "navigation":
-        return zero_motion()
-
     speed_scale = clamp(float(speed_scale), 0.0, 1.0)
+    if mode == "mapping":
+        speed_scale = min(speed_scale, 0.5)
     scaled_cruise_speed = cruise_speed * speed_scale
     scaled_slow_speed = slow_speed * speed_scale
     scaled_turn_speed = turn_speed * speed_scale
     speed = scaled_slow_speed if front_distance <= obstacle_slow_distance else scaled_cruise_speed
 
+    if mode == "navigation":
+        if not has_recent_navigation or not navigation_motion:
+            return zero_motion()
+        try:
+            values = {key: float(navigation_motion[key]) for key in zero_motion()}
+        except (KeyError, TypeError, ValueError):
+            return zero_motion()
+        if not all(math.isfinite(value) for value in values.values()):
+            return zero_motion()
+        # Preserve Nav2's curvature while enforcing the controller speed limit.
+        norm = math.hypot(values["linear_x"], values["linear_y"])
+        factor = min(1.0, speed / norm) if norm else 1.0
+        if values["angular_z"]:
+            factor = min(factor, max_angular_speed * speed_scale / abs(values["angular_z"]))
+        values["linear_x"] *= factor
+        values["linear_y"] *= factor
+        values["angular_z"] *= factor
+        return values
+
     if mode in {"manual", "mapping"}:
         if not has_recent_manual:
             return zero_motion()
-        return _manual_motion(manual_command, speed, scaled_turn_speed)
+        # Driver-selected speed stays constant; automatic proximity slowdown is
+        # for autonomous motion. The stop threshold and stale-input gates above
+        # still take precedence over manual control.
+        angular = scaled_turn_speed
+        if manual_turn_speed is not None:
+            try:
+                angular = float(manual_turn_speed)
+            except (TypeError, ValueError):
+                return zero_motion()
+            if not math.isfinite(angular) or not .05 <= angular <= .6:
+                return zero_motion()
+            angular = min(angular, max_angular_speed)
+        return _manual_motion(manual_command, scaled_cruise_speed, angular)
 
     if mode == "color_track":
         if not has_recent_lane:

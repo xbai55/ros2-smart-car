@@ -9,6 +9,7 @@ class ModeManager(Node):
     def __init__(self):
         super().__init__("mode_manager")
         self.declare_parameter("initial_mode", "stop")
+        self.declare_parameter("initial_emergency_stop", False)
         self.declare_parameter("mode_topic", "/robot/mode")
         self.declare_parameter("mode_set_topic", "/robot/mode/set")
         self.declare_parameter("emergency_stop_topic", "/robot/emergency_stop")
@@ -16,7 +17,9 @@ class ModeManager(Node):
         self.declare_parameter("publish_rate_hz", 5.0)
 
         self.mode = normalize_mode(self.get_parameter("initial_mode").value)
-        self.emergency_stop = False
+        self.emergency_stop = bool(self.get_parameter("initial_emergency_stop").value)
+        if self.emergency_stop:
+            self.mode = "stop"
 
         self.mode_pub = self.create_publisher(String, self.get_parameter("mode_topic").value, 10)
         self.estop_pub = self.create_publisher(Bool, self.get_parameter("emergency_stop_topic").value, 10)
@@ -33,9 +36,10 @@ class ModeManager(Node):
 
     def on_mode_set(self, msg):
         mode = normalize_mode(msg.data)
+        if self.emergency_stop and mode != "stop":
+            self.publish_state()
+            return
         self.mode = mode
-        if mode != "stop":
-            self.emergency_stop = False
         self.publish_state()
 
     def on_emergency_stop_set(self, msg):

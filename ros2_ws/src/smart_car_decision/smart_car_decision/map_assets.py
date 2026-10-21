@@ -137,7 +137,7 @@ def write_map_preview(map_yaml, destination):
 def save_occupancy_snapshot(snapshot, directory, stem=None):
     target_dir = Path(directory)
     target_dir.mkdir(parents=True, exist_ok=True)
-    stem = stem or datetime.now().strftime("slam_map_%Y%m%d_%H%M%S")
+    stem = stem or datetime.now().strftime("slam_map_%Y%m%d_%H%M%S_%f")
     pgm_path = target_dir / f"{stem}.pgm"
     yaml_path = target_dir / f"{stem}.yaml"
 
@@ -148,7 +148,7 @@ def save_occupancy_snapshot(snapshot, directory, stem=None):
     for row in range(height - 1, -1, -1):
         for col in range(width):
             value = data[row * width + col]
-            if value < 0:
+            if value < 0 or 25 <= value < 65:
                 pixels.append(205)
             elif value >= 65:
                 pixels.append(0)
@@ -168,7 +168,7 @@ def save_occupancy_snapshot(snapshot, directory, stem=None):
             f"origin: [{float(origin['x'])}, {float(origin['y'])}, {float(origin['yaw'])}]",
             "negate: 0",
             "occupied_thresh: 0.65",
-            "free_thresh: 0.25",
+            "free_thresh: 0.196",
             "",
         ]
     )

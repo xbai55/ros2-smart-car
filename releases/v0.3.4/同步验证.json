@@ -1,0 +1,17 @@
+{
+  "frontend_tests": 105,
+  "backend_tests": 88,
+  "mapping_navigation_tests": 31,
+  "desktop_tests": 26,
+  "installer_icon_sizes_verified": 7,
+  "real_car_driving_verified": false,
+  "excluded": [
+    "local maps",
+    "databases",
+    "logs",
+    "machine configuration",
+    "credential files",
+    "temporary outputs",
+    "downloaded model weights"
+  ]
+}

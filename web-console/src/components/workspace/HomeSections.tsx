@@ -1,3 +1,4 @@
+import { useRobotStream } from "../../hooks/useRobotStream";
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -12,71 +13,38 @@ import {
 import { useEffect, useState } from "react";
 import { Link } from "../../lib/router";
 import type { ActivityItem, Incident, Robot, Task } from "../../types/domain";
-import { Badge, ProgressBar, StatusDot } from "../ui";
+import { Badge, EmptyState, ProgressBar, StatusDot } from "../ui";
 
-export function HeroSection({ robots, incidents, tasks }: { robots: Robot[]; incidents: Incident[]; tasks: Task[] }) {
+export function HeroSection({ robots, incidents, tasks }: { robots: Robot[]; incidents: Incident[] | null; tasks: Task[] | null }) {
+  const { connection } = useRobotStream();
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(timer);
   }, []);
 
-  const online = robots.filter((r) => r.health === "online").length;
-  const openIncidents = incidents.filter((i) => i.status === "open" || i.status === "confirmed").length;
-  const activeTasks = tasks.filter((t) => t.status === "running" || t.status === "paused").length;
+  const online = robots.length && connection === "connected" ? 1 : 0;
+  const openIncidents = incidents ? incidents.filter((i) => i.status === "open" || i.status === "confirmed").length : "—";
+  const activeTasks = tasks ? tasks.filter((t) => t.status === "running" || t.status === "transporting").length : "—";
 
   return (
     <section className="hero">
       <div className="hero-copy">
-        <div className="hero-eyebrow"><span className="hero-live"><StatusDot tone="success" />系统运行正常</span><span className="hero-time">{now.toLocaleDateString("zh-CN")} · {now.toLocaleTimeString("zh-CN", { hour12: false })}</span></div>
+        <div className="hero-eyebrow"><span className="hero-live"><StatusDot tone={connection === "connected" ? "success" : "neutral"} />实车与业务记录</span><span className="hero-time">{now.toLocaleDateString("zh-CN")} · {now.toLocaleTimeString("zh-CN", { hour12: false })}</span></div>
         <h1 className="hero-title">InsightRover <span>智巡</span></h1>
         <p className="hero-subtitle">实验室安全巡检与文件运输系统</p>
-        <div className="hero-summary">
-          <div className="hero-summary-item"><strong>{online}</strong><span>在线机器人</span></div>
-          <div className="hero-summary-item"><strong className="danger">{openIncidents}</strong><span>待处理异常</span></div>
-          <div className="hero-summary-item"><strong className="blue">{activeTasks}</strong><span>进行中任务</span></div>
-        </div>
       </div>
-      <div className="hero-visual" aria-hidden="true">
-        <div className="hero-scene">
-          <div className="hero-radar" />
-          <Rover />
-          <div className="hero-floor" />
-        </div>
+      <div className="hero-summary" aria-label="车队业务统计">
+        <div className="hero-summary-item"><strong>{online}</strong><span>在线机器人</span></div>
+        <div className="hero-summary-item"><strong className="danger">{openIncidents}</strong><span>待处理异常</span></div>
+        <div className="hero-summary-item"><strong className="blue">{activeTasks}</strong><span>进行中业务任务</span></div>
       </div>
     </section>
   );
 }
 
-function Rover() {
-  return (
-    <svg className="rover" viewBox="0 0 220 120" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="智巡巡检机器人">
-      <ellipse cx="110" cy="106" rx="84" ry="9" fill="rgba(37,99,235,.12)" />
-      <g transform="translate(110,72)">
-        <rect x="-58" y="-28" width="116" height="40" rx="12" fill="#1e293b" />
-        <rect x="-58" y="-28" width="116" height="16" rx="8" fill="#334155" />
-        <rect x="30" y="-34" width="40" height="26" rx="7" fill="#1e293b" />
-        <rect x="36" y="-30" width="28" height="18" rx="5" fill="#0ea5e9" opacity=".85" />
-        <circle cx="66" cy="-21" r="4" fill="#bae6fd" />
-        <rect x="-52" y="-22" width="26" height="10" rx="3" fill="#0f172a" />
-        <circle cx="0" cy="-17" r="6" fill="#2563eb" />
-        <rect x="-8" y="-21" width="16" height="8" rx="4" fill="#1e293b" />
-        <line x1="-52" y1="-14" x2="52" y2="-14" stroke="#0f172a" strokeWidth="2" />
-        <rect x="-40" y="12" width="18" height="9" rx="2" fill="#0f172a" />
-        <rect x="22" y="12" width="18" height="9" rx="2" fill="#0f172a" />
-      </g>
-      <circle cx="64" cy="96" r="17" fill="#1e293b" />
-      <circle cx="64" cy="96" r="9" fill="#334155" />
-      <circle cx="64" cy="96" r="3.5" fill="#94a3b8" />
-      <circle cx="156" cy="96" r="17" fill="#1e293b" />
-      <circle cx="156" cy="96" r="9" fill="#334155" />
-      <circle cx="156" cy="96" r="3.5" fill="#94a3b8" />
-    </svg>
-  );
-}
-
 export function TaskCenterPanel({ tasks }: { tasks: Task[] }) {
-  const visible = tasks.filter((t) => t.status === "running" || t.status === "paused" || t.status === "pending").slice(0, 4);
+  const visible = tasks.filter((t) => ["running", "paused", "pending", "queued", "dispatched", "transporting"].includes(t.status)).slice(0, 4);
   return (
     <section className="home-panel">
       <header className="home-panel-head">
@@ -91,9 +59,10 @@ export function TaskCenterPanel({ tasks }: { tasks: Task[] }) {
               <strong>{task.title}</strong>
               <em>{task.robotName} · {task.currentStep}</em>
             </span>
-            <span className="task-row-progress"><ProgressBar value={task.progress} /><b>{task.progress}%</b></span>
+            <span className="task-row-progress">{task.progress == null ? "未记录进度" : <><ProgressBar value={task.progress} /><b>{task.progress}%</b></>}</span>
           </Link>
         ))}
+        {!visible.length && <EmptyState title="暂无待执行任务记录"/>}
       </div>
     </section>
   );
@@ -109,6 +78,7 @@ export function IncidentPanel({ incidents }: { incidents: Incident[] }) {
         <Link to="/incidents" className="home-panel-more">全部异常 <ArrowUpRight size={13} /></Link>
       </header>
       <div className="home-panel-body">
+        {!visible.length && <EmptyState title="暂无待处理异常记录"/>}
         {visible.map((incident) => (
           <Link key={incident.id} to={`/incidents/${incident.id}`} className="incident-row">
             <StatusDot tone={tone(incident.level)} />
@@ -116,7 +86,7 @@ export function IncidentPanel({ incidents }: { incidents: Incident[] }) {
               <strong>{incident.title}</strong>
               <em>{incident.location} · {incident.detectedAt}</em>
             </span>
-            <Badge tone={tone(incident.level)}>{incident.confidence}%</Badge>
+            <Badge tone={tone(incident.level)}>{incident.level === "critical" ? "严重" : incident.level === "warning" ? "警告" : "提示"}</Badge>
           </Link>
         ))}
       </div>
@@ -132,6 +102,7 @@ export function RecentObjectsPanel({ activity }: { activity: ActivityItem[] }) {
         <div className="home-panel-title"><Bot size={16} /><h3>最近动态</h3></div>
       </header>
       <div className="home-panel-body">
+        {!activity.length && <EmptyState title="暂无动态记录"/>}
         {activity.slice(0, 5).map((item) => {
           const Icon = iconFor(item.kind);
           return (
@@ -147,13 +118,10 @@ export function RecentObjectsPanel({ activity }: { activity: ActivityItem[] }) {
 }
 
 export function SystemOverviewPanel() {
-  const nodes = [
-    { name: "decision_controller", ok: true },
-    { name: "lidar_node", ok: true },
-    { name: "yolo_detector", ok: true },
-    { name: "camera_node", ok: false },
-  ];
-  const okCount = nodes.filter((n) => n.ok).length;
+  const {status,connection}=useRobotStream();
+  const online=connection==="connected";
+  const nodes=online?Object.entries(status.nodes).map(([name,value])=>({name,ok:value==="ok"})):[];
+  const okCount=nodes.filter(n=>n.ok).length;
   return (
     <section className="home-panel">
       <header className="home-panel-head">
@@ -162,7 +130,7 @@ export function SystemOverviewPanel() {
       </header>
       <div className="home-panel-body">
         <div className="sys-summary-line">
-          <span><Wifi size={14} />控制链路</span><strong>正常</strong>
+          <span><Wifi size={14} />实车控制链路</span><strong>{online ? "在线" : "未连接"}</strong>
         </div>
         <div className="sys-node-list">
           {nodes.map((node) => (
@@ -173,7 +141,7 @@ export function SystemOverviewPanel() {
             </div>
           ))}
         </div>
-        <div className="sys-summary-line"><span><FileText size={14} />节点在线</span><strong>{okCount}/{nodes.length}</strong></div>
+        <div className="sys-summary-line"><span><FileText size={14} />节点在线</span><strong>{online ? okCount + "/" + nodes.length : "—"}</strong></div>
       </div>
     </section>
   );
@@ -186,11 +154,11 @@ export function RobotStatusStrip({ robot, connected, mode, speed, distance }: { 
     <div className="robot-status-strip">
       <div className="strip-inner">
         <span className="strip-robot"><Bot size={14} />{robot.name}</span>
-        <span className="strip-item"><em>模式</em><strong>{modeLabel[mode] ?? mode}</strong></span>
-        <span className="strip-item"><em>速度</em><strong>{speed}%</strong></span>
+        <span className="strip-item"><em>模式</em><strong>{connected ? modeLabel[mode] ?? mode : "—"}</strong></span>
+        <span className="strip-item"><em>速度</em><strong>{connected ? speed + "%" : "—"}</strong></span>
         <span className="strip-item"><em>前方距离</em><strong>{distance == null ? "--" : `${distance.toFixed(2)} m`}</strong></span>
-        <span className="strip-item"><em>安全</em><strong className="safe">正常</strong></span>
-        <span className="strip-status"><StatusDot tone={connected ? "success" : "warning"} />{connected ? "实时连接" : "离线缓存"}</span>
+
+        <span className="strip-status"><StatusDot tone={connected ? "success" : "warning"} />{connected ? "实时连接" : "未连接实车"}</span>
       </div>
     </div>
   );

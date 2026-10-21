@@ -1,0 +1,2 @@
+726cfdfd8a5af2da641f6895535dddd4fa1d6a8ec8f2cabc709a0786616b7b7a  InsightRover-Setup-0.3.4-x64.exe
+6f57270a4cc29c1c316778d32385a5fde0ae13f45b598a3c9bc9d125b47a98ac  InsightRover-0.3.4-车端修复源码.zip

@@ -1,8 +1,39 @@
+> **当前 Windows 试用版：0.3.4（2026-10-21）**
+> 安装包与版本说明见 [releases/v0.3.4](releases/v0.3.4/README.md)，桌面版使用与构建说明见 [desktop/README.md](desktop/README.md)。
+> 默认使用 SLAM 直接导航；本轮已修复导航启动、退出建图和停车定位就绪判定。实际行驶精度仍待现场验收。
+
 # ROS2 智能小车感知与控制系统
+
+日常操作请先看 [简明启动说明：SSH、车端、本地服务与 Wi-Fi 切换](../README.md)。
+
+2026-10-13 更新：React 新界面已配套部署，完成上传平面图四点标定与 SLAM 分层显示、视频连接复用，以及真实静止感知和架空控制输出检查。完整移动建图、实际标定精度与导航尚未验收。当前进度见 [本轮总结](../当前进度与下一步方案_2026-10-13.md)。下面 Flutter 重构部分仍保留旧说明，当前 React 启动方式以简明启动说明为准。
 
 本项目面向 Yahboom ROSMASTER X3 四轮麦克纳姆智能小车，基于 ROS2 Humble 构建感知、决策、安全控制与 Web 运维控制台。当前代码已经在 Jetson 实车上部署，完成了底盘接入、激光雷达安全控制、YOLO11 视觉识别、HSV 颜色追踪、人物目标跟随、网页遥控和实时状态展示等功能。
 
 本文档记录的是当前仓库与实车已经具备的能力，同时明确列出测试证据、能力边界和未完成工作，可作为后续项目报告中“系统设计”“功能实现”“测试分析”和“总结展望”等章节的事实依据。
+
+## 0. 企业级控制台重构（Flutter + FastAPI）
+
+在保留上述 ROS2 车端安全链的基础上，仓库新增独立的管理平台：
+
+- `flutter_app/`：Flutter Web 控制台，Riverpod + Freezed + go_router。页面包括登录、总览、机器人、巡检、运输任务、事件、分析、设置与企业级功能（用户、角色权限、通知、审计、地图/路线、个人中心）。
+- `backend/`：FastAPI + SQLAlchemy，提供 JWT/Refresh Token 与 RBAC。默认 SQLite 便于本地验证，实时层保留 Redis 抽象。
+- `robot-gateway/`：Flutter/FastAPI 与 ROS2 之间的唯一控制边界。**禁止直接发布 `/cmd_vel`**，只发布 `/robot/mode/set`、`/manual_cmd`、`/robot/emergency_stop/set`、`/robot/speed_scale` 与任务指令。
+- `docs/refactor/`：前端审查、分阶段实施报告与视觉截图。
+
+本地启动（后端默认 `http://127.0.0.1:8000`，前端构建产物默认 `http://127.0.0.1:8888`）：
+
+```bash
+cd backend
+python -m app.seed
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+cd ../flutter_app
+flutter pub get
+flutter run -d chrome
+```
+
+登录账号由 `backend/app/seed.py` 初始化：`admin/admin123`、`operator/operator123`、`auditor/auditor123`。
 
 ## 1. 当前完成情况
 
@@ -19,8 +50,8 @@
 | 颜色配置保存 | 已实现并测试 | 保存在浏览器本地，刷新后重新下发到 ROS；不是 Jetson 端永久配置文件 |
 | Web 状态与视频 | 已实现并测试 | 提供 REST、WebSocket、MJPEG/标注帧转发和雷达可视化 |
 | Docker 工程文件 | 已提供 | 已有 Dockerfile 和运行脚本，但未完成当前版本的完整实车容器验收 |
-| SLAM 与地图资产 | 代码已实现，待 Jetson 验收 | 已有 slam_toolbox 配置、建图 launch、地图保存/加载和质量报告工具 |
-| Nav2 导航 | 未完成 | 不在当前扫描与建图开发范围内 |
+| SLAM 与地图资产 | 已完成 Jetson 静止初始化及地图保存 | 已有 slam_toolbox 链路及上传图标定展示；完整移动建图、回环和实际标定精度待验收 |
+| Nav2 导航 | 代码链路已提供，实车导航未验收 | 已有启动配置与导航接口；真实定位、目标执行、避障和到点精度待现场验证 |
 | 机械臂抓取 | 未完成 | 不在当前软件闭环中 |
 
 ## 2. 项目边界与自研部分
@@ -275,17 +306,26 @@ http://192.168.1.104:8080
 
 ### 9.1 REST 接口
 
-| 方法 | 路径 | 功能 |
-| --- | --- | --- |
-| GET | `/api/status` | 获取当前系统状态 |
-| POST | `/api/mode` | 设置工作模式 |
-| POST | `/api/command` | 发送手动控制命令 |
-| POST | `/api/emergency-stop` | 设置或解除急停 |
-| POST | `/api/speed` | 设置速度比例 |
-| POST | `/api/color-target` | 设置 HSV 颜色配置 |
-| GET | `/video_feed` | 获取 MJPEG 视频流 |
+| 方法 | 路径 | 功能 | ROS2 对应接口 |
+| --- | --- | --- | --- |
+| GET | `/health` | Web Node 存活检查（ROS2 数据情况在 `ros2` 子字段） | `/robot/status`（仅判断新鲜度） |
+| GET | `/api/status` | 获取当前系统状态 | `/robot/status`、`/odom`、`/tf`、`/scan` |
+| GET | `/api/map` | 获取 SLAM 地图快照（无地图时 404） | `/map` |
+| POST | `/api/command` | 下发控制意图（手动命令 / 模式 / 速度比例 / 急停 / 任务） | `/manual_cmd`、`/robot/mode/set`、`/robot/speed_scale`、`/robot/emergency_stop/set`、`/patrol_task/set`、`/mission_task/set` |
+| POST | `/api/mode` | 设置工作模式 | `/robot/mode/set` |
+| POST | `/api/emergency-stop` | 设置或解除急停 | `/robot/emergency_stop/set`（同时向 `/manual_cmd` 发 stop） |
+| POST | `/api/speed` | 设置速度比例 | `/robot/speed_scale` |
+| POST | `/api/patrol-task` | 下发巡检任务 | `/patrol_task/set` |
+| POST | `/api/mission-task` | 下发运输任务 | `/mission_task/set` |
+| POST | `/api/color-target` | 设置 HSV 颜色配置 | `/vision/color_config` |
+| POST | `/api/mode-obstacle-stop-distance` | 设置分模式障碍停车距离 | `/robot/mode_obstacle_stop_distances` |
+| POST | `/api/tracking-target` | 选择跟随目标 | `/vision/tracking_target/set` |
+| GET | `/api/video` | 视频服务地址与状态（不返回视频数据） | `/vision/annotated_frame` |
+| GET | `/video_feed` | 获取 MJPEG 视频流 | `/vision/annotated_frame` / USB 摄像头 |
 
-WebSocket 接口包括 `/ws/status` 和 `/ws/control`，分别用于实时状态推送和低延迟手动命令。
+WebSocket 接口包括 `/ws/status` 和 `/ws/control`，分别用于实时状态推送和低延迟手动命令。`/ws/status` 每帧既保留旧控制台使用的扁平状态字段，也附带文档信封 `{"type": "robot_status", "timestamp": ..., "data": {...}}`。
+
+Web Node 只发布**控制意图**话题，永远不会发布 `/cmd_vel`；最终速度由 `decision_controller` 仲裁。完整契约、启动方式与测试范围见 `docs/vehicle-web-api.md`。
 
 ## 10. 构建与运行
 
