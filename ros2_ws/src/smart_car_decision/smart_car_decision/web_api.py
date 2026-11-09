@@ -33,6 +33,7 @@ ROS2 适配通过传入的 ``node`` 对象完成（鸭子类型）。``create_ap
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time

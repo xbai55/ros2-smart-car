@@ -277,3 +277,18 @@ def test_current_task_prefers_the_most_recently_updated_task():
 def test_every_documented_mode_is_accepted_by_the_web_api():
     for mode in VALID_MODES:
         assert normalize_mode_request({"mode": mode}) == mode
+
+
+
+def test_vehicle_diagnostics_decodes_cursor(web_client, fake_node, monkeypatch):
+    from smart_car_decision import diagnostic_log
+
+    monkeypatch.setattr(diagnostic_log, 'read_page', lambda cursors: {
+        'events': [], 'cursors': cursors,
+    })
+    monkeypatch.setattr(fake_node.pose_debug_log, 'write_error', None, raising=False)
+    endpoint = '/api/diagnostics/events'
+    response = web_client.get(endpoint, params={'cursors': '{"controller-1":"sample"}'})
+    assert response.status_code == 200
+    assert response.json()['cursors'] == {'controller-1': 'sample'}
+    assert web_client.get(endpoint, params={'cursors': '{invalid'}).status_code == 422
