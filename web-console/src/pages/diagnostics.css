@@ -1,0 +1,14 @@
+.diagnostics-actions, .diagnostics-filters { display:flex; flex-wrap:wrap; gap:12px; margin:16px 0; align-items:end; }
+.diagnostics-filters label { display:grid; gap:4px; }
+.diagnostics-filters input, .diagnostics-filters select, .diagnostics button {
+  padding:6px 10px; border:1px solid var(--border, #798394); border-radius:6px; background:transparent; color:inherit;
+}
+.diagnostics button[aria-pressed=true] { border-color:#4685e4; box-shadow:inset 0 -2px #4685e4; }
+.diagnostics-scroll { overflow:auto; }
+.diagnostics table { border-collapse:collapse; width:100%; }
+.diagnostics th, .diagnostics td { padding:8px; text-align:left; border-bottom:1px solid var(--border, #798394); }
+.diagnostic-level { font-weight:700; }
+.diagnostic-level.WARN { color:#8a5300; background:#fff0ce; padding:3px 5px; border-radius:4px; }
+.diagnostic-level.ERROR, .diagnostic-level.CRITICAL { color:#991b1b; background:#ffe4e6; padding:3px 5px; border-radius:4px; }
+.diagnostics-detail { margin-top:18px; padding:16px; border:1px solid var(--border, #798394); border-radius:8px; }
+.diagnostics-detail pre { overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }

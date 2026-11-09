@@ -3,6 +3,7 @@ import asyncio
 import math
 import time
 from uuid import uuid4
+from .diagnostic_log import request_ids
 
 
 class LeaseBridge:
@@ -44,6 +45,9 @@ class LeaseBridge:
         wire = {key: payload[key] for key in ("op", "controller_id", "control_epoch", "owner", "sequence", "purpose", "forward_limit_mps")
                 if key in payload}
         wire["request_id"] = ident
+        ids = request_ids.get()
+        if ids:
+            wire['diagnostic'] = ids
         self.node.publish_control_lease(wire)
         deadline = self.clock() + .8
         while self.clock() < deadline:

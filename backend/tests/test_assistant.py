@@ -140,12 +140,12 @@ def test_assistant_permission_migration_does_not_restore_revoked_permission():
     ensure_schema(engine)
     with Session(engine) as db:
         operator = db.get(Role, "operator")
-        assert {permission.name for permission in operator.permissions} == {"assistant.read", "assistant.use"}
+        assert {permission.name for permission in operator.permissions} == {"assistant.read", "assistant.use", "diagnostics.read"}
         operator.permissions = [permission for permission in operator.permissions if permission.name != "assistant.use"]
         db.commit()
     ensure_schema(engine)
     with Session(engine) as db:
-        assert {permission.name for permission in db.get(Role, "operator").permissions} == {"assistant.read"}
+        assert {permission.name for permission in db.get(Role, "operator").permissions} == {"assistant.read", "diagnostics.read"}
 
 
 def test_confirmation_is_idempotent_and_owner_scoped(client, login, monkeypatch, seeded_db):

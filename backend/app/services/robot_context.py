@@ -11,6 +11,7 @@ from ..db.session import SessionLocal
 from ..gateway import get_robot_gateway
 from ..models import AppSetting, Robot
 from .realtime import get_realtime_store
+from .diagnostics import emit as diagnostic_emit
 
 MAX_AGE = 2.5
 FIELDS = ("mode", "status", "network", "position", "map_pose", "speed", "battery",
@@ -50,6 +51,7 @@ class RobotContextService:
 
     async def run(self):
         last_binding = None
+        last_diagnostic = None
         while True:
             try:
                 with SessionLocal() as db:
@@ -80,6 +82,13 @@ class RobotContextService:
                 if last_binding:
                     get_realtime_store().clear_status(last_binding[0])
                 logger.debug("Robot telemetry poll failed", exc_info=True)
+            if last_binding:
+                diagnostic = (last_binding[0], self.reason)
+                if diagnostic != last_diagnostic:
+                    diagnostic_emit('gateway.failed' if self.reason else 'gateway.connected',
+                                    self.reason or 'vehicle_recovered', module='robot_context',
+                                    robot_id=last_binding[0], level='WARN' if self.reason else 'INFO')
+                    last_diagnostic = diagnostic
             await asyncio.sleep(1)
 
     async def poll(self, binding, exists):

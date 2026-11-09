@@ -117,6 +117,7 @@ const navItems: NavItem[] = [
       items: [
         { label: "系统状态", href: "/system", desc: "实车传感器与 ROS2 节点" },
         { label: "用户与角色", href: "/settings", desc: "RBAC 权限与账户" },
+        { label: "日志与诊断", href: "/system/diagnostics", desc: "停车原因与运行日志" },
         { label: "审计日志", href: "/settings", desc: "关键操作留痕" },
       ],
       footer: { label: "进入系统中心", href: "/system" },
@@ -134,6 +135,8 @@ function BrandMark() {
 }
 
 function NavigationMenu({ path }: { path: string }) {
+  const session = useBusinessSession();
+  const canReadDiagnostics = session?.user.role?.permissions.some(p => p.name === 'diagnostics.read');
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [path]);
   useEffect(() => { const close = (e: KeyboardEvent) => { if(e.key === "Escape") setOpen(false); }; window.addEventListener("keydown", close); return () => window.removeEventListener("keydown", close); }, []);
@@ -157,7 +160,7 @@ function NavigationMenu({ path }: { path: string }) {
                   <span>{item.mega.desc}</span>
                 </div>
                 <div className="mega-grid">
-                  {item.mega.items.map((link) => {
+                  {item.mega.items.filter(link => link.href !== '/system/diagnostics' || canReadDiagnostics).map((link) => {
                     const LIcon = link.icon ?? item.icon;
                     return (
                       <Link key={link.label} to={link.href} className="mega-item">

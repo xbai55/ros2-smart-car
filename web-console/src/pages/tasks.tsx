@@ -147,7 +147,7 @@ function TaskDetail({ id, session }: { id: string; session: BusinessSession }) {
   const map = catalog.data?.maps.find(item => item.id === task?.map_id);
   const route = catalog.data?.routes.find(item => item.id === task?.route_id);
   return <div className="page"><Link to="/tasks" className="back-link">返回任务中心</Link>{loading ? <EmptyState title="加载中…"/> : error ? <EmptyState title="任务数据不可用" hint={error}/> : !task ? <EmptyState title="未找到该任务"/> : <>
-    <ObjectHeader kicker="Task" title={task.name} subtitle="实车任务按导航反馈更新；未派发任务可在地图工作区配置目标" badges={[{ label: `${typeLabel(task.type)}任务`, tone: "blue" }]}/>
+    <ObjectHeader kicker="Task" title={task.name} subtitle="实车任务按导航反馈更新；未派发任务可在地图工作区配置目标" badges={[{ label: `${typeLabel(task.type)}任务`, tone: "blue" }]} actions={session.user.role?.permissions.some(p => p.name === 'diagnostics.read') ? <Link to={`/system/diagnostics/tasks/${encodeURIComponent(id)}`}>关联运行日志</Link> : undefined}/>
     <TaskExecutionControls task={task} kind={task.type === "patrol" ? "patrol" : "delivery"}/>
     <Panel title="任务记录"><div className="profile-list task-profile">
       <div><em>业务状态</em><strong><Badge>{labels[task.status] || task.status}</Badge></strong></div>

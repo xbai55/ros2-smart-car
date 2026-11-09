@@ -26,6 +26,9 @@ def pose(status):
     return value
 
 
+from .diagnostics import emit as diagnostic_emit
+
+
 async def execute_relative(binding, user, step, run_id, guard):
     distance = step["distance_m"]
     if type(distance) not in (int,float) or not math.isfinite(distance) or not .05 <= distance <= .20:
@@ -34,6 +37,7 @@ async def execute_relative(binding, user, step, run_id, guard):
     lease, old_scale, stop_result = None, None, None
     achieved = False
     travelled = 0.
+    stop_reason = 'relative_interrupted'
     try:
         guard()
         status = await gateway.get_status(binding[0])
@@ -93,9 +97,13 @@ async def execute_relative(binding, user, step, run_id, guard):
                     break
                 await send_drive(binding,user,"forward",run_id,lease.drive_sequence+1, client=channel)
                 await asyncio.sleep(.1)
+        stop_reason = 'relative_distance_reached' if achieved else 'relative_time_limit'
     finally:
         # A cancelled coroutine also follows the existing stop path.
         if lease is not None and manager.current is lease:
+            diagnostic_emit('task.changed', stop_reason, module='relative_motion', robot_id=binding[0],
+                            run_id=run_id, level='INFO' if achieved else 'WARN',
+                            details={'state': 'stopping', 'requested': distance, 'distance_m': travelled})
             try:
                 stop_result = await gateway.stop()
             finally:

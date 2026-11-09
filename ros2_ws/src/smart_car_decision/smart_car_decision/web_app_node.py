@@ -15,6 +15,7 @@ from std_msgs.msg import Bool, Float32, String
 from .web_camera import CameraStream
 from .mapping_session import MapSnapshotStore, MappingRestartManager
 from .pose_debug_log import PoseDebugLog
+from .diagnostic_log import DiagnosticLog, request_ids
 from .mapping_settings import MappingSettings
 from .mapping_recording import MappingInputRecorder
 from .web_api import STATUS_STALE_SEC, create_app, resolve_bind_address
@@ -77,7 +78,8 @@ class WebAppNode(Node):
         self._navigation_map_message = None
         self._navigation_map_lock = threading.RLock()
         self.navigation_map_pub = self.create_publisher(OccupancyGrid, "/navigation/map", QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL, reliability=ReliabilityPolicy.RELIABLE))
-        self.pose_debug_log = PoseDebugLog()
+        self.pose_debug_log = PoseDebugLog(background=True)
+        self.diagnostic_log = DiagnosticLog('web')
         self.motion_settings = MappingSettings(self.get_parameter('motion_mapping_settings_path').value)
         self.mapping_recorder = MappingInputRecorder(self.get_parameter('mapping_logs_directory').value)
         self.mapping_restart = MappingRestartManager(self.get_logger(), self.map_snapshot,
@@ -348,6 +350,8 @@ class WebAppNode(Node):
         return mode
 
     def set_command(self, command, drive=None):
+        if drive and request_ids.get():
+            drive = {**drive, 'diagnostic': request_ids.get()}
         command = self.store.set_command(command)
         msg = String()
         msg.data = json.dumps({**drive, "command": command}) if drive is not None else command
@@ -359,6 +363,8 @@ class WebAppNode(Node):
         msg = Bool()
         msg.data = state
         self.estop_pub.publish(msg)
+        if state and getattr(self, 'diagnostic_log', None):
+            self.diagnostic_log.emit('stop.requested', 'emergency_stop', level='WARN')
         if state:
             stop = String()
             stop.data = "stop"

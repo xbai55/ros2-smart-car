@@ -10,6 +10,7 @@ from ..models import MissionTask, PatrolTask
 from .navigation_execution import execution, store_execution
 from .robot_context import vehicle_binding
 from .control_leases import control_lease_manager
+from .diagnostics import emit as diagnostic_emit
 
 logger = logging.getLogger(__name__)
 TERMINAL = {"completed", "cancelled", "failed"}
@@ -51,6 +52,11 @@ async def reconcile_once(session_factory=SessionLocal):
                 store_execution(db, task, value)
                 db.commit()
                 accepted = execution(task)
+                if accepted and accepted.get('state') != previous.get('state'):
+                    diagnostic_emit('task.changed', accepted['state'], module='task_reconciler',
+                                    robot_id=binding[0], task_id=task_id, run_id=run_id,
+                                    level='WARN' if accepted['state'] == 'failed' else 'INFO',
+                                    details={'state': accepted['state']})
             await control_lease_manager.observe_run(accepted)
         except Exception:
             logger.debug("Vehicle task reconciliation pending for %s", task_id, exc_info=True)

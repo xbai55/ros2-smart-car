@@ -14,15 +14,9 @@ from .base import Base
 revisions = Table("schema_migrations", MetaData(), TableColumn("revision", String(64), primary_key=True))
 
 
-def _assistant_revision(engine):
+def _permission_revision(engine, revision, grants):
     from ..models import Permission, Role
 
-    revision = "v4-assistant-permissions-1"
-    grants = {
-        "assistant.read": ("查看自己的助手会话", {"admin", "operator", "viewer", "auditor"}),
-        "assistant.use": ("向助手发送消息", {"admin", "operator"}),
-        "assistant.settings": ("管理助手模型启用状态", {"admin"}),
-    }
     with engine.begin() as connection:
         revisions.create(connection, checkfirst=True)
         if connection.scalar(select(revisions.c.revision).where(revisions.c.revision == revision)):
@@ -74,7 +68,19 @@ def ensure_schema(engine: Engine) -> list[str]:
             existing.add(column.name)
             added.append(f"{table.name}.{column.name}")
     if {"roles", "permissions", "role_permissions"} <= tables:
-        _assistant_revision(engine)
+        _permission_revision(engine, "v4-assistant-permissions-1", {
+            "assistant.read": ("查看自己的助手会话", {"admin", "operator", "viewer", "auditor"}),
+            "assistant.use": ("向助手发送消息", {"admin", "operator"}),
+            "assistant.settings": ("管理助手模型启用状态", {"admin"}),
+        })
+        _permission_revision(engine, "v4-diagnostics-permissions-1", {
+            "diagnostics.read": ("查看系统运行摘要", {"admin", "operator"}),
+            "diagnostics.technical": ("查看技术诊断", {"admin"}),
+            "diagnostics.export": ("导出诊断包", {"admin"}),
+        })
+    if "assistant_events" in tables:
+        with engine.begin() as connection:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_assistant_events_execution_id ON assistant_events (execution_id)"))
     if "capability_acceptances" in tables:
         with engine.begin() as connection:
             revisions.create(connection, checkfirst=True)

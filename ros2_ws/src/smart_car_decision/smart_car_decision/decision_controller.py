@@ -22,6 +22,8 @@ from .avoidance import AvoidanceController, ScanEvidence, ZERO, wrap
 from .avoidance_settings import AvoidanceSettings, validate_settings
 from .footprint import Rectangle
 from .search_control import SearchGate
+from .diagnostic_log import DiagnosticLog, wire_ids
+from .motion_diagnostics import MotionDiagnostics, vector
 from .control_lease import ControlLease
 from .scan_provenance import visibility
 from .scan_health import ScanHealth
@@ -80,6 +82,10 @@ class DecisionController(Node):
         self.odom_at = 0.0
         self.actual_speed = 0.0
         self.search_gate = SearchGate()
+        self.diagnostic_log = DiagnosticLog('controller')
+        self.motion_diagnostics = MotionDiagnostics(self.diagnostic_log)
+        self.lease_diagnostic_ids = {}
+        self.drive_diagnostic_ids = {}
         self.scan_packets = {}
         self.scan_health = ScanHealth()
         self.scan_profile = {}
@@ -394,10 +400,17 @@ class DecisionController(Node):
             except (ValueError, TypeError):
                 return
             if not lease.accepts_drive(intent, now, self.mode):
+                sink = getattr(self, 'diagnostic_log', None)
+                if sink and now - getattr(self, '_last_rejection', 0) >= 1:
+                    self._last_rejection = now
+                    sink.emit('motion.rejected', 'drive_identity_or_sequence', level='WARN')
                 return
+            self.drive_diagnostic_ids = wire_ids(intent.get('diagnostic'))
             command = normalize_command(intent.get('command'))
         else:
             command = normalize_command(msg.data)
+        if command == 'stop' and msg.data == 'stop':
+            self.drive_diagnostic_ids = {}
         if command != self.manual_command:
             self.avoidance.reset()
         self.manual_command = command
@@ -413,6 +426,7 @@ class DecisionController(Node):
             if lease is not None and self.mode in ("manual", "mapping") and lease.purpose == self.mode:
                 lease.revoke("operator_mode_changed")
             self.manual_command = 'stop'
+            self.drive_diagnostic_ids = {}
             self.last_manual_time = 0.0
             self.navigation_motion = None
             self.last_navigation_time = 0.0
@@ -455,6 +469,8 @@ class DecisionController(Node):
         self.control_period_ms=period*1000
         self.control_overruns=getattr(self,'control_overruns',0)+int(period>2./self.publish_rate_hz)
         twist = Twist()
+        diagnostics = getattr(self, 'motion_diagnostics', None)
+        reasons = [] if diagnostics and diagnostics.sink.enabled else None
         motion = decide_motion(
             mode=self.mode,
             emergency_stop=self.emergency_stop,
@@ -479,40 +495,84 @@ class DecisionController(Node):
             navigation_motion=self.navigation_motion,
             has_recent_navigation=now - self.last_navigation_time <= self.navigation_timeout_sec,
             apply_obstacle_stop=False,
+            diagnostic_reasons=reasons,
         )
         gate = getattr(self, 'search_gate', None)
         lease = getattr(self, 'control_lease', None)
         lease_blocked = lease is not None and (lease.blocked(now) or lease.purpose != self.mode)
-        if self.operator_stop or self.emergency_stop or (gate is not None and gate.blocked(now)) or lease_blocked:
+        policy = vector(motion) if reasons is not None else None
+        gate_blocked = False
+        if self.operator_stop or self.emergency_stop or (gate_blocked := gate is not None and gate.blocked(now)) or lease_blocked:
+            if reasons is not None:
+                if self.operator_stop:
+                    reasons.append('operator_stop')
+                if self.emergency_stop and 'emergency_stop' not in reasons:
+                    reasons.append('emergency_stop')
+                if gate_blocked:
+                    reasons.append(getattr(gate, 'diagnostic_reason', 'search_gate_blocked'))
+                if lease_blocked:
+                    reasons.append(lease.reason if lease.owner is None else 'lease_mode_mismatch')
             motion = dict(ZERO)
         if self.mode in self.follow_targets:
             valid, observed_at = self.follow_targets[self.mode]
             if not valid or now-observed_at > .5:
+                if reasons is not None:
+                    reasons.append('follow_target_unavailable')
                 motion = dict(ZERO)
         evidence = self.scan_evidence
         if any(motion.values()) and evidence is not None and self.pose is not None and self.evidence_pose is not None:
             tx, ty = self.avoidance.local(self.evidence_pose[:2], self.pose)
             evidence = evidence.reframe(tx, ty, wrap(self.evidence_pose[2]-self.pose[2]))
+        avoidance_input = any(motion.values()) if reasons is not None else False
         motion = self.avoidance.step(motion, mode=self.mode, now=now,
                     evidence=evidence, scan_age=now-self.evidence_at,
                     pose=self.pose, odom_age=now-self.odom_at,
                     confirmed=self.avoidance_confirmed and not self.avoidance_config.error,
                     legacy_stop=self.mode_obstacle_stop_distances.get(self.mode, self.obstacle_stop_distance),
                     actual_speed=self.actual_speed)
+        if avoidance_input and not any(motion.values()):
+            reasons.append('avoidance_' + self.avoidance.state)
         # The final gate also prevents avoidance manoeuvres continuing after expiry.
         if lease_blocked:
+            if reasons is not None and any(motion.values()):
+                reasons.append(lease.reason if lease.owner is None else 'lease_mode_mismatch')
             motion = dict(ZERO)
         limit = getattr(lease, "forward_limit_mps", None)
         if limit is not None:
             # A bounded forward task never follows an avoidance sidestep or turn.
             if motion["linear_x"] < 0 or abs(motion["linear_y"]) > 1e-9 or abs(motion["angular_z"]) > 1e-9:
+                if reasons is not None:
+                    reasons.append('bounded_forward_components')
                 motion = dict(ZERO)
             else:
                 motion["linear_x"] = min(motion["linear_x"], limit)
         twist.linear.x = motion["linear_x"]
         twist.linear.y = motion["linear_y"]
         twist.angular.z = motion["angular_z"]
-        self.publisher.publish(twist)
+        try:
+            self.publisher.publish(twist)
+        except Exception:
+            if diagnostics:
+                diagnostics.finish('twist_publication_failed')
+            raise
+        if reasons is not None:
+            try:
+                ids = getattr(self, 'lease_diagnostic_ids', {})
+                if self.mode in ('manual', 'mapping') and not self.operator_stop:
+                    ids = {**ids, **getattr(self, 'drive_diagnostic_ids', {})}
+                if gate_blocked and getattr(self, 'search_diagnostic_ids', None):
+                    ids = self.search_diagnostic_ids
+                intent = self.manual_command if self.mode in ('manual', 'mapping') else self.mode
+                if intent == 'stop':
+                    intent = None
+                diagnostics.observe(time.monotonic(), mode=self.mode, intent=intent, policy=policy,
+                                    final=vector(motion), reasons=reasons, lease=lease, limit=limit,
+                                    odom=(self.odom_at, self.actual_speed, getattr(self, 'actual_angular_speed', math.inf)),
+                                    ids=ids, requested=vector(self.navigation_motion) if
+                                    self.mode == 'navigation' and self.navigation_motion else intent)
+            except Exception:
+                # Diagnostics may never abort a control callback.
+                pass
 
     def on_control_lease(self, message):
         try:
@@ -521,6 +581,8 @@ class DecisionController(Node):
                           and abs(getattr(self, 'actual_angular_speed', 1.)) < .02)
             request = json.loads(message.data)
             if self.control_lease.update(request, now, stationary) and request["op"] != "renew":
+                self.lease_diagnostic_ids = wire_ids(request.get('diagnostic'))
+                self.drive_diagnostic_ids = {}
                 self.manual_command = "stop"
                 self.last_manual_time = 0.0
                 self.navigation_motion = None
@@ -535,13 +597,22 @@ class DecisionController(Node):
         value["linear_cruise_speed_mps"] = self.cruise_speed
         message.data = json.dumps(value, allow_nan=False)
         self.lease_status_pub.publish(message)
+        sink = getattr(self, 'diagnostic_log', None)
+        signature = (value['control_epoch'], value['blocked'], value['purpose'], value['reason'])
+        if sink and signature != getattr(self, '_diagnostic_lease_signature', None):
+            self._diagnostic_lease_signature = signature
+            reason = value['reason']
+            sink.emit('lease.changed', reason, level='WARN' if reason == 'control_lease_expired' else 'INFO',
+                      ids=getattr(self, 'lease_diagnostic_ids', {}),
+                      details={'lease_blocked': value['blocked'], 'lease_purpose': value['purpose']})
 
     def on_search_control(self, message):
         try:
             value = json.loads(message.data)
             stationary = (self.mode == 'stop' and time.monotonic()-self.odom_at < .5
                           and self.actual_speed < .01 and abs(getattr(self,'actual_angular_speed',1.)) < .02)
-            self.search_gate.update(value, time.monotonic(), stationary)
+            if self.search_gate.update(value, time.monotonic(), stationary) and value.get('op') != 'heartbeat':
+                self.search_diagnostic_ids = {**wire_ids(value.get('diagnostic')), 'run_id': self.search_gate.run_id}
         except (ValueError, TypeError, AttributeError):
             pass
 
@@ -616,6 +687,13 @@ def main():
         rclpy.spin(node)
     finally:
         node.publisher.publish(Twist())
+        diagnostics = getattr(node, 'motion_diagnostics', None)
+        if diagnostics:
+            diagnostics.finish('controller_exited')
+            if diagnostics.moving:
+                node.diagnostic_log.emit('motion.zero', 'controller_shutdown', level='WARN',
+                                         details={'final': [0, 0, 0], 'mode': node.mode})
+            node.diagnostic_log.close()
         node.destroy_node()
         rclpy.shutdown()
 

@@ -159,6 +159,9 @@ async def propose(db, user, binding, args):
     return {"robot_id": binding[0], "steps": prepared}
 
 
+from .diagnostics import emit as diagnostic_emit
+
+
 async def ask(provider, db, user, history, prompt):
     binding = vehicle_binding(db)
     messages = [{"role": "system", "content": SYSTEM}, *history, {"role": "user", "content": prompt}]
@@ -168,7 +171,20 @@ async def ask(provider, db, user, history, prompt):
     known_references = set()
     async with asyncio.timeout(30):
         for round_index in range(4):
-            answer = await provider.complete(messages, TOOL_SCHEMAS)
+            import time
+            started = time.monotonic()
+            try:
+                answer = await provider.complete(messages, TOOL_SCHEMAS)
+            except Exception as exc:
+                diagnostic_emit('assistant.model', 'provider_failed', module='assistant', level='ERROR',
+                                exception=exc, details={'elapsed_ms': (time.monotonic()-started)*1000})
+                raise
+            usage = answer.get('usage', {}) if isinstance(answer, dict) else {}
+            diagnostic_emit('assistant.model', 'provider_returned', module='assistant',
+                            details={**(usage if isinstance(usage, dict) else {}),
+                                     'model': getattr(provider, 'model', None),
+                                     'provider': type(provider).__name__,
+                                     'elapsed_ms': (time.monotonic()-started)*1000})
             calls = answer.get("tool_calls")
             if not calls:
                 text = answer.get("content")
@@ -189,6 +205,7 @@ async def ask(provider, db, user, history, prompt):
                 if not isinstance(raw, str) or len(raw) > 16000:
                     raise ValueError("模型工具参数无效")
                 clean_calls.append({"id": ident, "type": "function", "function": {"name": name, "arguments": raw}})
+                tool_started = time.monotonic()
                 try:
                     if name not in TOOLS:
                         raise ValueError("工具不在允许列表")
@@ -225,6 +242,10 @@ async def ask(provider, db, user, history, prompt):
                                 known_references.add((item["source"], item["resource_id"], item["map_id"]))
                 except (ValidationError, ValueError, HTTPException):
                     result = {"error": "权限、资源或参数校验失败，请澄清请求"}
+                diagnostic_emit('assistant.tool', 'tool_rejected' if 'error' in result else 'tool_completed',
+                                module='assistant', level='WARN' if 'error' in result else 'INFO',
+                                details={'tool': name if name in TOOLS else 'unknown',
+                                         'elapsed_ms': (time.monotonic()-tool_started)*1000})
                 results.append({"role": "tool", "tool_call_id": ident,
                                 "content": json.dumps(result, ensure_ascii=False, allow_nan=False)})
             messages.extend([{"role": "assistant", "content": None, "tool_calls": clean_calls}, *results])

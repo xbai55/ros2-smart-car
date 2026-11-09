@@ -17,4 +17,5 @@ done
 
 source install/setup.bash
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-77}"
+export VEHICLE_DIAGNOSTICS_DIR="${VEHICLE_DIAGNOSTICS_DIR:-$HOME/.local/share/insightrover/diagnostics}"
 ros2 launch smart_car_decision bringup_all.launch.py

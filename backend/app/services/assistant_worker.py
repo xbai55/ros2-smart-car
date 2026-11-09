@@ -15,6 +15,8 @@ from ..api.routes import navigation_tasks
 from ..db.session import SessionLocal
 from ..gateway import get_robot_gateway
 from ..models import AssistantExecution, AssistantPlan, AssistantTrialAuthorization, AssistantWorkerLock, User
+from ..core.diagnostic_context import context as diagnostic_context
+from .diagnostics import emit as diagnostic_emit
 from .assistant_execution import emit_event, execution_view, request_cancellation, step_permission, validate_steps
 from .control_leases import control_lease_manager
 from .robot_context import robot_context_service, vehicle_binding
@@ -26,16 +28,21 @@ ACTIVE = {"queued", "dispatching", "unconfirmed", "running", "waiting_human", "p
 
 
 def transition(db, row, version, state, **changes):
+    previous_run = row.run_id
     result = db.execute(update(AssistantExecution).where(
         AssistantExecution.id == row.id, AssistantExecution.version == version
     ).values(state=state, version=version + 1, **changes).returning(AssistantExecution))
     current = result.scalar_one_or_none()
     if current is not None:
-        value = execution_view(current)
+        value = {**execution_view(current), 'run_id': current.run_id or previous_run}
         if state == "waiting_human":
             value["session_id"] = db.get(AssistantPlan, current.plan_id).session_id
         emit_event(db, current.user_id, "execution." + state, value)
     db.commit()
+    if current is not None:
+        diagnostic_emit('assistant.execution', state, module='assistant_worker',
+                        execution_id=current.id, robot_id=current.robot_id, run_id=value['run_id'], task_id=current.task_id,
+                        details={'state': state, 'version': current.version, 'step_index': current.step_index})
     return current
 
 
@@ -235,6 +242,10 @@ class AssistantWorker:
             if row is None:
                 return
             ident, initial_version = row.id, row.version
+            diagnostic_plan = db.get(AssistantPlan, row.plan_id)
+            token = diagnostic_context.set({'trace_id': getattr(diagnostic_plan, 'trace_id', None),
+                                            'execution_id': row.id, 'robot_id': row.robot_id,
+                                            'run_id': row.run_id})
             try:
                 if row.state == "cancel_requested":
                     await self._cancel_run(db, row)
@@ -285,7 +296,11 @@ class AssistantWorker:
                         transition(db, current, current.version, "paused",
                                    message=exc.detail if isinstance(exc, HTTPException) and isinstance(exc.detail, str)
                                    else "车辆或执行状态未确认")
+                diagnostic_emit('assistant.execution', 'reconciliation_required', module='assistant_worker',
+                                level='ERROR', exception=exc)
                 logger.debug("Assistant execution requires reconciliation for %s", ident, exc_info=True)
+            finally:
+                diagnostic_context.reset(token)
 
     async def _cancel_run(self, db, row):
         version = row.version

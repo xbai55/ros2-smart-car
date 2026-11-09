@@ -27,6 +27,7 @@ class AssistantTurn(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     session_id: Mapped[str] = mapped_column(ForeignKey("assistant_sessions.id"), index=True)
     client_id: Mapped[str] = mapped_column(String(36))
+    trace_id: Mapped[str | None] = mapped_column(String(32))
     prompt: Mapped[str] = mapped_column(Text)
     reply: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -38,6 +39,7 @@ class AssistantPlan(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     session_id: Mapped[str] = mapped_column(ForeignKey("assistant_sessions.id"), index=True)
     robot_id: Mapped[str] = mapped_column(ForeignKey("robots.id"))
+    trace_id: Mapped[str | None] = mapped_column(String(32))
     content: Mapped[str] = mapped_column(Text)
     digest: Mapped[str] = mapped_column(String(64))
     state: Mapped[str] = mapped_column(String(24), default="draft")
@@ -92,6 +94,7 @@ class AssistantEvent(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    execution_id: Mapped[str | None] = mapped_column(String(36), index=True)
     kind: Mapped[str] = mapped_column(String(48))
     payload: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

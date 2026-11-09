@@ -94,6 +94,16 @@ async function request(path: string, options: RequestInit = {}, prefix = "/api/v
   if (!response.ok) { if (response.status === 401) clearBusinessSession(); throw await responseError(response); }
   return response;
 }
+export function diagnosticRequest<T>(path: string, signal?: AbortSignal) {
+  return json<T>(`/diagnostics${path}`, { signal });
+}
+export function diagnosticExport(data: { start: string; end: string; format: string; robot_id?: string }) {
+  return request('/diagnostics/exports', jsonOptions('POST', data));
+}
+export function diagnosticClientEvent(reason: string) {
+  return request('/diagnostics/client-events', jsonOptions('POST', { reason }));
+}
+
 export function vehicleControlRequest(url: string, options: RequestInit) {
   return request(url.replace(/^\/api\//, "/"), options, "/api/control");
 }

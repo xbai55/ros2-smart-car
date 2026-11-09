@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timezone
 from uuid import uuid4
+from ..core.diagnostic_context import context as diagnostic_context
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -43,7 +44,7 @@ def record_audit(
             action=action,
             resource=resource,
             resource_id=resource_id,
-            request_id=request_id,
+            request_id=request_id or diagnostic_context.get().get('request_id'),
             before=json.dumps(before or {}, ensure_ascii=False),
             after=json.dumps(after or {}, ensure_ascii=False),
         )

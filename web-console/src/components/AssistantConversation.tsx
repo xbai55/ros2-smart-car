@@ -201,6 +201,7 @@ export function AssistantConversation({ canSend, preferredSession, update, onQue
           {turn.reply.plan.execution ? <><small role="status">
             {executionLabels[turn.reply.plan.execution.state] ?? turn.reply.plan.execution.state}
           </small>
+            <a href={`#/system/diagnostics/executions/${encodeURIComponent(turn.reply.plan.execution.id)}`}>查看执行诊断</a>
             {turn.reply.plan.execution.message && <p>{turn.reply.plan.execution.message}</p>}
             {canSend && !["cancel_requested", "completed", "cancelled", "failed"].includes(turn.reply.plan.execution.state) &&
               <button type="button" className="btn btn-outline" disabled={!!confirming}

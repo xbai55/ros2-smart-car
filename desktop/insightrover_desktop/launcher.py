@@ -36,15 +36,14 @@ class BackendProcess:
         if getattr(sys,'frozen',False):command=[sys.executable]
         else:command=[sys.executable,str(Path(__file__).resolve().parents[1]/'desktop_entry.py')]
         command+=['--serve','--port',str(port),'--data-dir',str(self.config.root)]
-        logs=self.config.root/'logs';logs.mkdir(exist_ok=True)
-        with (logs/'backend.log').open('ab') as output:
-            self.process=subprocess.Popen(command,env=env,stdout=output,stderr=output,stdin=subprocess.DEVNULL,
-                    creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+        self.process=subprocess.Popen(command,env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+        self._diagnose('desktop.started', 'process_started')
         try:
             with httpx.Client(trust_env=False,timeout=1) as client:
                 end=time.monotonic()+25
                 while time.monotonic()<end:
-                    if self.process.poll() is not None:raise RuntimeError('后台启动失败，请查看数据目录中的 logs/backend.log')
+                    if self.process.poll() is not None:raise RuntimeError('后台启动失败，请查看应用诊断')
                     try:
                         if client.get(self.url+'/desktop/health').status_code==200:
                             (self.config.root/'runtime.json').write_text(json.dumps({'url':self.url,'pid':os.getpid()}),encoding='utf-8')
@@ -64,13 +63,29 @@ class BackendProcess:
                 self.process.wait(timeout=10)
             except (httpx.HTTPError,subprocess.TimeoutExpired):
                 self.process.terminate();self.process.wait(timeout=5)
+        self._diagnose('desktop.exited', 'process_exited', self.process.returncode)
         self.process=None
         (self.config.root/'runtime.json').unlink(missing_ok=True)
 
 
+    def _diagnose(self, kind, reason, code=None):
+        if os.getenv('DIAGNOSTICS_ENABLED', '1') == '0':
+            return
+        try:
+            from app.services.diagnostics import DiagnosticStore, utc
+            store = DiagnosticStore(self.config.root/'diagnostics'/'diagnostics.sqlite3')
+            store.init()
+            store.write([{"event_id": secrets.token_hex(16), "occurred_at": utc(), "source": "desktop",
+                          "service": "insightrover", "module": "launcher", "event_type": kind,
+                          "reason_code": reason, "level": "ERROR" if code else "INFO",
+                          "context": {"exit_code": code}}])
+        except Exception:
+            # Local startup and shutdown must work when diagnostics storage is unavailable.
+            pass
+
+
 def serve(config,port):
-    logs=config.root/'logs';logs.mkdir(exist_ok=True)
-    if sys.stdout is None:sys.stdout=(logs/'backend.log').open('a',encoding='utf-8')
+    if sys.stdout is None:sys.stdout=open(os.devnull,'w',encoding='utf-8')
     if sys.stderr is None:sys.stderr=sys.stdout
     from .server import create_server
     import uvicorn,asyncio

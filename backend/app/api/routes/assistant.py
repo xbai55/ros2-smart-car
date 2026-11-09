@@ -3,6 +3,8 @@ import hashlib
 import json
 import time
 from uuid import UUID, uuid4
+from ...core.diagnostic_context import context as diagnostic_context
+from ...services.diagnostics import emit as diagnostic_emit
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -134,7 +136,8 @@ async def send_message(session_id: str, payload: MessageIn, db: Session = Depend
             raise HTTPException(409, "重复请求不能修改消息")
         return turn_view(turn, user)
     if turn is None:
-        turn = AssistantTurn(id=str(uuid4()), session_id=session_id, client_id=client_id, prompt=payload.text)
+        turn = AssistantTurn(id=str(uuid4()), session_id=session_id, client_id=client_id, prompt=payload.text,
+                             trace_id=diagnostic_context.get().get('trace_id'))
         db.add(turn)
     history = []
     previous = db.scalars(select(AssistantTurn).where(
@@ -168,7 +171,8 @@ async def send_message(session_id: str, payload: MessageIn, db: Session = Depend
         if draft is not None:
             encoded = json.dumps(draft, sort_keys=True, ensure_ascii=False, allow_nan=False)
             plan = AssistantPlan(id=str(uuid4()), session_id=session_id, robot_id=draft["robot_id"], content=encoded,
-                                 digest=hashlib.sha256(encoded.encode()).hexdigest(), expires_at=int(time.time())+300)
+                                 digest=hashlib.sha256(encoded.encode()).hexdigest(), expires_at=int(time.time())+300,
+                                 trace_id=diagnostic_context.get().get('trace_id'))
             db.add(plan)
             result["plan"] = {"id": plan.id, "digest": plan.digest, "version": 1, "state": "draft",
                               "expires_at": plan.expires_at, **draft}
@@ -176,6 +180,9 @@ async def send_message(session_id: str, payload: MessageIn, db: Session = Depend
                        {"id": plan.id, "session_id": session_id, "expires_at": plan.expires_at})
         turn.reply = json.dumps(result, ensure_ascii=False)
         db.commit()
+        if draft is not None:
+            diagnostic_emit('assistant.plan', 'draft_created', module='assistant', robot_id=plan.robot_id,
+                            details={'plan_id': plan.id, 'version': plan.version})
         return turn_view(turn, user)
     finally:
         db.rollback()
@@ -218,7 +225,20 @@ def plan_detail(plan_id: str, db: Session = Depends(get_db),
 @router.post("/plans/{plan_id}/confirm")
 async def confirm_plan(plan_id: str, payload: ConfirmIn, db: Session = Depends(get_db),
                        user: User = Depends(require_permission("assistant.use"))):
-    return await confirm(db, plan_for(db, plan_id, user), user, payload.version, payload.digest)
+    plan = plan_for(db, plan_id, user)
+    ids = diagnostic_context.get()
+    token = diagnostic_context.set({**ids, 'trace_id': plan.trace_id or ids.get('trace_id')})
+    try:
+        result = await confirm(db, plan, user, payload.version, payload.digest)
+        diagnostic_emit('assistant.confirm', 'plan_confirmed', module='assistant', robot_id=plan.robot_id,
+                        execution_id=result.get('id'), details={'plan_id': plan.id, 'version': payload.version})
+        return result
+    except HTTPException as exc:
+        diagnostic_emit('assistant.confirm', 'plan_rejected', module='assistant', level='WARN',
+                        details={'plan_id': plan.id, 'status_code': exc.status_code})
+        raise
+    finally:
+        diagnostic_context.reset(token)
 
 
 @router.post("/plans/{plan_id}/trial-authorize")

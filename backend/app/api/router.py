@@ -6,6 +6,7 @@ from .routes import (
     capability_acceptances,
     audit,
     auth,
+    diagnostics,
     incidents,
     maps,
     media,
@@ -43,6 +44,7 @@ api_router.include_router(analytics.router)
 api_router.include_router(analytics.statistics_router)
 api_router.include_router(notifications.router)
 api_router.include_router(audit.router)
+api_router.include_router(diagnostics.router)
 api_router.include_router(settings.router)
 api_router.include_router(system.router)
 api_router.include_router(media.router)

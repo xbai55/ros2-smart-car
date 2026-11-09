@@ -621,6 +621,31 @@ def create_app(
             raise HTTPException(status_code=404, detail="web console is not installed")
         return FileResponse(static_path / "index.html")
 
+    @app.get("/api/diagnostics/events")
+    def diagnostics_events(cursors: str = '{}'):
+        from .diagnostic_log import read_page
+        from .component_manifest import component_manifest
+        if len(cursors) > 1024:
+            raise HTTPException(422, '诊断游标过长')
+        try:
+            value = json.loads(cursors)
+        except ValueError:
+            raise HTTPException(422, '诊断游标无效') from None
+        if not isinstance(value, dict) or len(value) > 6:
+            raise HTTPException(422, '诊断游标无效')
+        page = read_page(value)
+        sink = getattr(node, 'diagnostic_log', None)
+        pose = getattr(node, 'pose_debug_log', None)
+        try:
+            build = component_manifest()['source_sha256']
+        except OSError:
+            build = None
+        page['instance_id'] = sink.instance_id if sink else None
+        page['health'] = {'version': SERVICE_VERSION, 'build': build,
+                          'web_write_failed': sink.health['write_failed'] if sink else None,
+                          'pose_write_failed': bool(pose.write_error) if pose else None}
+        return page
+
     @app.get("/health")
     def health():
         return build_health_payload(node)

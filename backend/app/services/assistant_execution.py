@@ -17,7 +17,9 @@ from .robot_context import robot_context_service, vehicle_binding
 
 
 def emit_event(db, owner, kind, payload):
-    db.add(AssistantEvent(user_id=owner, kind=kind, payload=json.dumps(payload, ensure_ascii=False)))
+    db.add(AssistantEvent(user_id=owner, kind=kind,
+                          execution_id=payload.get('id') if kind.startswith('execution.') else None,
+                          payload=json.dumps(payload, ensure_ascii=False)))
 
 
 def execution_view(row):

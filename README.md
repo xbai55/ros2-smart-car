@@ -328,6 +328,8 @@ WebSocket 接口包括 `/ws/status` 和 `/ws/control`，分别用于实时状态
 
 Web Node 只发布**控制意图**话题，永远不会发布 `/cmd_vel`；最终速度由 `decision_controller` 仲裁。完整契约、启动方式与测试范围见 `docs/vehicle-web-api.md`。
 
+日志与诊断中心的停车证据、运行日志、权限和导出说明见 [v4 日志与诊断](docs/v4-diagnostics.md)。
+
 ## 10. 构建与运行
 
 ### 10.1 Jetson 原生运行

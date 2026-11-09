@@ -2,6 +2,8 @@
 import asyncio
 import math
 import time
+from uuid import uuid4
+from .diagnostic_log import request_ids
 from .lease_bridge import LeaseBridge
 
 
@@ -21,6 +23,10 @@ def stationary_evidence(sample, after, now):
 
 
 async def stop_vehicle(node):
+    sink = getattr(node, 'diagnostic_log', None)
+    ids = {**request_ids.get(), 'episode_id': uuid4().hex} if sink else {}
+    if sink:
+        sink.emit('stop.requested', 'independent_stop', ids=ids)
     errors = []
     sent = False
     for name, argument in (("set_command", "stop"), ("set_mode", "stop")):
@@ -45,7 +51,12 @@ async def stop_vehicle(node):
     confirmed = False
     confirmed_at = None
     try:
-        result = await lease.request({"op": "stop", "controller_id": lease.snapshot().get("controller_id")})
+        token = request_ids.set(ids) if sink else None
+        try:
+            result = await lease.request({"op": "stop", "controller_id": lease.snapshot().get("controller_id")})
+        finally:
+            if token is not None:
+                request_ids.reset(token)
         stopped_lease = result.get("lease", {})
         confirmed = result.get("confirmed") is True and stopped_lease.get("blocked") is True
         if confirmed:
@@ -72,6 +83,9 @@ async def stop_vehicle(node):
                 stationary = True
                 break
             await asyncio.sleep(.05)
-    return {"request_sent": sent or confirmed, "controller_confirmed": confirmed,
-            "stationary_confirmed": stationary,
-            "errors": errors}
+    output = {"request_sent": sent or confirmed, "controller_confirmed": confirmed,
+              "stationary_confirmed": stationary, "errors": errors}
+    if sink:
+        sink.emit('stop.result', 'stationary_confirmed' if stationary else 'stationary_unconfirmed',
+                  ids=ids, level='INFO' if stationary else 'WARN', details={**output, 'failures': errors})
+    return output

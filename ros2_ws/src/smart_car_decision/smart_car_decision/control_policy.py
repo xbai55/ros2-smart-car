@@ -77,19 +77,28 @@ def decide_motion(
     navigation_motion=None,
     has_recent_navigation=False,
     apply_obstacle_stop=True,
+    diagnostic_reasons=None,
 ):
     mode = normalize_mode(mode)
     detection = str(detection or "").strip().lower().replace("-", "_").replace(" ", "_")
     manual_command = normalize_manual_command(manual_command)
 
     if emergency_stop or mode == "stop":
+        if diagnostic_reasons is not None:
+            diagnostic_reasons.append('emergency_stop' if emergency_stop else 'stop_mode')
         return zero_motion()
     if mode in {"auto", "color_track", "object_follow", "mapping", "navigation"} and not has_recent_scan:
+        if diagnostic_reasons is not None:
+            diagnostic_reasons.append('scan_timeout')
         return zero_motion()
     active_stop_distance = _mode_obstacle_stop_distance(mode, obstacle_stop_distance, mode_obstacle_stop_distances)
     if apply_obstacle_stop and active_stop_distance > 0.0 and front_distance <= active_stop_distance:
+        if diagnostic_reasons is not None:
+            diagnostic_reasons.append('obstacle_distance')
         return zero_motion()
     speed_scale = clamp(float(speed_scale), 0.0, 1.0)
+    if diagnostic_reasons is not None and not speed_scale:
+        diagnostic_reasons.append('speed_scale_zero')
     if mode == "mapping":
         speed_scale = min(speed_scale, 0.5)
     scaled_cruise_speed = cruise_speed * speed_scale
@@ -99,12 +108,16 @@ def decide_motion(
 
     if mode == "navigation":
         if not has_recent_navigation or not navigation_motion:
+            if diagnostic_reasons is not None:
+                diagnostic_reasons.append('navigation_command_timeout')
             return zero_motion()
         try:
             values = {key: float(navigation_motion[key]) for key in zero_motion()}
         except (KeyError, TypeError, ValueError):
             return zero_motion()
         if not all(math.isfinite(value) for value in values.values()):
+            if diagnostic_reasons is not None:
+                diagnostic_reasons.append('navigation_invalid_velocity')
             return zero_motion()
         # Preserve Nav2's curvature while enforcing the controller speed limit.
         norm = math.hypot(values["linear_x"], values["linear_y"])
@@ -118,6 +131,8 @@ def decide_motion(
 
     if mode in {"manual", "mapping"}:
         if not has_recent_manual:
+            if diagnostic_reasons is not None:
+                diagnostic_reasons.append('manual_command_timeout')
             return zero_motion()
         # Driver-selected speed stays constant; automatic proximity slowdown is
         # for autonomous motion. The stop threshold and stale-input gates above
@@ -135,16 +150,22 @@ def decide_motion(
 
     if mode == "color_track":
         if not has_recent_lane:
+            if diagnostic_reasons is not None:
+                diagnostic_reasons.append('follow_input_timeout')
             return zero_motion()
         return _offset_follow_motion(lane_offset, scaled_slow_speed, lane_kp, max_angular_speed)
 
     if mode == "object_follow":
         if not has_recent_lane:
+            if diagnostic_reasons is not None:
+                diagnostic_reasons.append('follow_input_timeout')
             return zero_motion()
         return _offset_follow_motion(lane_offset, scaled_slow_speed, lane_kp, max_angular_speed)
 
     if mode == "auto":
         if not has_recent_detection:
+            if diagnostic_reasons is not None:
+                diagnostic_reasons.append('detection_timeout')
             return zero_motion()
         motion = _detection_motion(detection, scaled_cruise_speed, scaled_slow_speed, scaled_turn_speed)
         if motion is not None:

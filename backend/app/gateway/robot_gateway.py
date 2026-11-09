@@ -10,6 +10,10 @@ Gateway 永不直接发布 /cmd_vel，只允许模式、手动命令、急停、
 from __future__ import annotations
 
 from typing import Any
+import time
+
+from ..core.diagnostic_context import wire_headers
+from ..services.diagnostics import emit
 
 import httpx
 
@@ -49,10 +53,26 @@ class RobotGateway:
     @staticmethod
     def _client(timeout: float) -> httpx.AsyncClient:
         # trust_env=False：车端在局域网内，不走系统 HTTP/SOCKS 代理
-        headers = {}
+        headers = wire_headers()
         if token := machine_token():
             headers["X-InsightRover-Service-Token"] = token
-        return httpx.AsyncClient(timeout=timeout, trust_env=False, headers=headers)
+        async def start(request):
+            request.extensions['diagnostic_started'] = time.monotonic()
+
+        async def finish(response):
+            request = response.request
+            if response.status_code < 400 and (request.method == 'GET' or request.url.path in {
+                '/api/command', '/api/control-lease',
+            }):
+                return
+            emit('gateway.response', f'http_{response.status_code}', module='robot_gateway',
+                 level='WARN' if response.status_code >= 400 else 'INFO', details={
+                     'status_code': response.status_code,
+                     'elapsed_ms': (time.monotonic() - request.extensions['diagnostic_started']) * 1000,
+                 })
+
+        return httpx.AsyncClient(timeout=timeout, trust_env=False, headers=headers,
+                                 event_hooks={'request': [start], 'response': [finish]})
 
     def _url(self, path: str) -> str:
         return f"{self.base_url}{path}"
@@ -69,10 +89,18 @@ class RobotGateway:
     async def stop(self):
         if not self.base_url:
             raise RuntimeError("未配置车端地址")
-        async with self._client(3) as client:
-            response = await client.post(self._url("/api/stop"), json={})
-            response.raise_for_status()
-            return response.json()
+        try:
+            async with self._client(3) as client:
+                response = await client.post(self._url("/api/stop"), json={})
+                response.raise_for_status()
+                value = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            emit('gateway.failed', 'stop_response_unavailable', module='robot_gateway', level='ERROR', exception=exc)
+            raise
+        emit('gateway.stop', 'vehicle_stop_response', module='robot_gateway',
+             details={key: value.get(key) for key in ('request_sent', 'controller_confirmed', 'stationary_confirmed')}
+             if isinstance(value, dict) else {})
+        return value
 
     async def operator_request(self, path, payload):
         if not self.base_url or path not in {"command", "mode", "mapping/restart"}:

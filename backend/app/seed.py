@@ -29,6 +29,9 @@ PERMISSIONS = {
     "users.manage": "管理用户与角色",
     "settings.read": "查看系统设置",
     "settings.manage": "管理系统设置",
+    "diagnostics.read": "查看系统运行摘要",
+    "diagnostics.technical": "查看技术诊断",
+    "diagnostics.export": "导出诊断包",
     "audit.read": "查看审计日志",
     "notifications.read": "查看通知",
     "assistant.read": "查看自己的助手会话",
@@ -61,6 +64,7 @@ ROLES = {
         "notifications.read",
         "assistant.read",
         "assistant.use",
+        "diagnostics.read",
     ],
     "auditor": [
         "robots.read",

@@ -17,6 +17,7 @@ from ..deps import get_db, require_permission
 from ...services.robot_context import vehicle_binding
 from ...services.navigation_execution import execution, store_execution
 from ...services.control_leases import control_lease_manager
+from ...services.diagnostics import emit as diagnostic_emit
 
 router = APIRouter(prefix="/navigation-tasks", tags=["navigation-tasks"])
 
@@ -115,6 +116,8 @@ async def create_execution(payload: dict = Body(...), db: Session = Depends(get_
                                "message": "执行请求已保存，等待车端确认", "request": wire_payload, "request_fingerprint": fingerprint})
         record_audit(db, user, "navigation.prepare", "task", task_id)
         db.commit()
+        diagnostic_emit('task.changed', 'dispatch_prepared', module='navigation_tasks',
+                        robot_id=item.robot_id, task_id=task_id, run_id=run_id)
     result = await _call(db, "task", wire_payload)
     if result.get("run_id") != run_id or result.get("task_id") != task_id:
         raise _error(502, "车端任务标识不一致，尚未确认派发")

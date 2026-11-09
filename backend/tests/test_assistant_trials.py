@@ -53,6 +53,10 @@ def test_single_plan_trial_is_admin_scoped_consumed_once_and_not_acceptance(clie
     grant.expires_at=int(time.time())-1;seeded_db.commit()
     with pytest.raises(HTTPException):
         assistant_trials.require_trial(seeded_db,admin,plan.id,"observe_target","a"*64,grant.execution_id)
+    # The shared test database must not leave a pending execution for another worker fixture.
+    result = client.post('/api/v1/assistant/executions/' + first.json()['id'] + '/actions',
+                         headers=headers, json={'action': 'cancel'})
+    assert result.json()['state'] == 'cancelled'
 
 
 @pytest.mark.parametrize("action",["navigate","patrol","patrol_search","deliver"])

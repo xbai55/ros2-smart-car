@@ -12,6 +12,7 @@ class SearchGate:
         self.active = False
         self.at = 0.
         self.reason = '无搜索任务'
+        self.diagnostic_reason = 'search_gate_held'
 
     def update(self, value, now, stationary=False):
         if value.get('controller_id') != self.instance_id:
@@ -41,11 +42,13 @@ class SearchGate:
         else:
             return False
         self.version, self.at, self.reason = version, now, str(value.get('reason', op))[:200]
+        self.diagnostic_reason = 'search_gate_held'
         return True
 
     def blocked(self, now):
         if self.active and (not math.isfinite(now) or now - self.at > 1.):
             self.held, self.reason = True, '搜索心跳超时，等待人工恢复'
+            self.diagnostic_reason = 'search_gate_timeout'
         return self.active and self.held
 
     def snapshot(self, now):

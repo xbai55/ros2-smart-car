@@ -8,6 +8,7 @@ import { TasksPage, TaskDetailPage } from "./pages/tasks";
 import { IncidentsPage, IncidentDetailPage } from "./pages/incidents";
 import { MapsPage, MapDetailPage, RoutesPage, RouteDetailPage } from "./pages/maps";
 import { AnalyticsPage } from "./pages/analytics";
+import { DiagnosticsPage } from "./pages/diagnostics";
 import { SystemPage } from "./pages/system";
 import { AssetsPage } from "./pages/assets";
 import { SettingsPage } from "./pages/settings";
@@ -35,6 +36,9 @@ function renderRoute(path: string) {
   if (path === "/routes") return <RoutesPage />;
   if ((params = matchRoute("/routes/:id", path))) return <RouteDetailPage id={params.id} />;
   if (path === "/analytics") return <AnalyticsPage />;
+  if ((params = matchRoute('/system/diagnostics/executions/:id', path))) return <DiagnosticsPage executionId={params.id} />;
+  if ((params = matchRoute('/system/diagnostics/tasks/:id', path))) return <DiagnosticsPage initialTask={params.id} />;
+  if (path === '/system/diagnostics') return <DiagnosticsPage />;
   if (path === "/system") return <SystemPage />;
   if (path === "/assets") return <AssetsPage />;
   if (path === "/settings") return <SettingsPage />;

@@ -23,4 +23,11 @@ class ServiceAuthentication:
                 response = JSONResponse({"detail": "车端机器凭据未配置" if status == 503 else "机器凭据无效"}, status_code=status)
                 await response(scope, receive, send)
             return
-        await self.app(scope, receive, send)
+        from .diagnostic_log import correlation, request_ids
+        keys = {b'traceparent', b'x-request-id', b'x-insightrover-run-id'}
+        ids = correlation({key.decode(): value.decode('latin1') for key, value in headers.items() if key in keys})
+        token = request_ids.set(ids)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            request_ids.reset(token)

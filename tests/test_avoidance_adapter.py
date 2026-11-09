@@ -74,6 +74,33 @@ def controller(monkeypatch, tmp_path):
     return c
 
 
+def test_live_controller_stop_records_actual_output_without_changing_twist(controller):
+    from smart_car_decision.motion_diagnostics import MotionDiagnostics
+
+    class Sink:
+        enabled = True
+        events = []
+
+        def emit(self, kind, reason, **values):
+            self.events.append((kind, reason, values))
+
+    c = controller
+    config(c)
+    c.publish_rate_hz = 20.0
+    c.on_mode(NS(data='manual'))
+    c.on_manual_command(NS(data='forward'))
+    c.control_loop()
+    original = c.output[-1].linear.x
+    c.motion_diagnostics = MotionDiagnostics(Sink())
+    c.control_loop()
+    assert original > 0
+    assert c.output[-1].linear.x == original
+    c.on_emergency_stop(NS(data=True))
+    c.control_loop()
+    assert c.output[-1].linear.x == 0
+    assert c.motion_diagnostics.sink.events[0][:2] == ('motion.zero', 'emergency_stop')
+
+
 def config(c, **changes):
     value = {'request_id': 'request', 'settings': dict(DEFAULTS), 'robot_radius_m': .25}
     value.update(changes)

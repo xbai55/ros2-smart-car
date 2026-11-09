@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 from uuid import uuid4
+from .diagnostic_log import request_ids
 
 from .navigation_config import drawing_identity, finite_number, map_key, transform_point, validate_map_goal
 from .lease_bridge import LeaseBridge
@@ -95,6 +96,7 @@ class NavigationTaskRunner:
 
     def _update(self, **values):
         with self.lock:
+            previous_state = self.state.get('state')
             reset = values.pop("_reset", False)
             next_state = {**({} if reset else self.state), **values, "updated_at": time.time(),
                           "version": 1 if reset else self.state.get("version", 0) + 1}
@@ -110,6 +112,12 @@ class NavigationTaskRunner:
                 _write_record(target, next_state)
                 self.state = next_state
             self.state = next_state
+            sink = getattr(self.node, 'diagnostic_log', None)
+            if sink and (reset or previous_state != next_state.get('state')):
+                state = next_state.get('state', 'unknown')
+                sink.emit('task.changed', state, level='WARN' if state == 'failed' else 'INFO',
+                          ids={**request_ids.get(), 'run_id': next_state.get('run_id')},
+                          details={'state': state, 'version': next_state['version']})
 
     def _lease_valid(self, identity):
         if not self.require_lease:

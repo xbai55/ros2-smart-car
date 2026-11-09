@@ -1,8 +1,11 @@
+import atexit
 from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, RegisterEventHandler
+from launch.event_handlers import OnProcessExit, OnProcessStart
+from smart_car_decision.diagnostic_log import DiagnosticLog
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
@@ -15,8 +18,22 @@ def generate_launch_description():
     params = str(pkg_share / "config" / "decision.yaml")
     x3_urdf = str(yahboom_description_share / "urdf" / "yahboomcar_X3.urdf")
 
+    diagnostics = DiagnosticLog("launch")
+    atexit.register(diagnostics.close)
+
+    def started(event, _context):
+        diagnostics.emit('node.started', 'process_started', details={'target': getattr(event, 'process_name', None)})
+
+    def exited(event, _context):
+        code = getattr(event, 'returncode', None)
+        diagnostics.emit('node.exited', 'process_failed' if code else 'process_exited',
+                         level='ERROR' if code else 'INFO',
+                         details={'target': getattr(event, 'process_name', None), 'exit_code': code})
+
     return LaunchDescription(
         [
+            RegisterEventHandler(OnProcessStart(on_start=started)),
+            RegisterEventHandler(OnProcessExit(on_exit=exited)),
             DeclareLaunchArgument(
                 "start_yolo_camera",
                 default_value="true",

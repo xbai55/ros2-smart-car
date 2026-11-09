@@ -10,6 +10,7 @@ import threading
 import time
 from pathlib import Path
 from uuid import uuid4
+from .diagnostic_log import request_ids
 from datetime import datetime, timezone
 
 from .navigation_tasks import _write_record
@@ -164,7 +165,8 @@ class VisionService:
             return
         self.protocol_version+=1
         self.node.publish_search_control({'controller_id':ack['controller_id'],'run_id':self.search['run_id'],
-            'version':self.protocol_version,'op':op,'reason':self.search['message']})
+            'version':self.protocol_version,'op':op,'reason':self.search['message'],
+            'diagnostic':request_ids.get()})
 
     def _hold(self, state, message):
         self.desired_gate='hold'

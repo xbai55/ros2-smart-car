@@ -88,6 +88,16 @@ def run(exe,installer=None,output=OUT):
                     assert client.get('/api/control/status').status_code == 401
                     assert client.get('/api/control/status',headers=headers).json()['mode']=='stop'
                     assert client.get('/desktop/health').json()['version']==VERSION
+                    assert client.get('/api/v1/diagnostics/health').status_code == 401
+                    for _ in range(40):
+                        health = client.get('/api/v1/diagnostics/health', headers=headers)
+                        if health.status_code == 200 and health.json().get('status') == 'ready':
+                            break
+                        time.sleep(.1)
+                    else:
+                        raise AssertionError('Frozen diagnostic index did not become ready')
+                    events = client.get('/api/v1/diagnostics/events', headers=headers)
+                    assert events.status_code == 200 and isinstance(events.json()['items'], list)
                     assert client.get('/api/control/avoidance',headers=headers).json()['supported'] is True
                     pending=client.post('/api/control/avoidance',json={'enabled':False},headers=headers)
                     assert pending.status_code==202 and pending.json()['confirmed'] is False
@@ -110,7 +120,7 @@ def run(exe,installer=None,output=OUT):
                     assert client.post('/desktop/quit').status_code==403
                     client.post('/desktop/quit',headers={'X-InsightRover-Token':'isolated-test-control'})
                 process.wait(timeout=15)
-                result['rounds'].append({'round':round_number,'login':True,'http_proxy':True,'video':True,'websocket':True,'map_retained':True,'exit_code':process.returncode})
+                result['rounds'].append({'round':round_number,'login':True,'http_proxy':True,'video':True,'websocket':True,'map_retained':True,'diagnostics':True,'exit_code':process.returncode})
             finally:
                 if process.poll() is None:process.terminate();process.wait(timeout=5)
                 backend_log.close()

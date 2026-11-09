@@ -65,7 +65,7 @@ class AppConfig:
             env.pop(name, None)
         env["INSIGHTROVER_CREDENTIAL_PROFILE"] = self.credential_profile
         env.update(DATABASE_URL='sqlite:///'+(self.root/'smart_patrol.db').as_posix(),
-                   STORAGE_LOCAL_DIR=str(self.root/'storage'),JWT_SECRET=self.value['jwt_secret'],
+                   STORAGE_LOCAL_DIR=str(self.root/'storage'),DIAGNOSTICS_DIR=str(self.root/'diagnostics'),JWT_SECRET=self.value['jwt_secret'],
                    ROBOT_WEB_URL=self.car_url,REDIS_ENABLED='false',MINIO_ENDPOINT='',
                    APP_VERSION=VERSION,NO_PROXY='127.0.0.1,localhost',no_proxy='127.0.0.1,localhost')
         return env

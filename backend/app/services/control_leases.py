@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from ..db.session import SessionLocal
+from ..core.diagnostic_context import context as diagnostic_context
+from .diagnostics import emit as diagnostic_emit
 from ..gateway import get_robot_gateway
 from ..models import User
 from .control_access import require_bound_vehicle
@@ -47,14 +49,20 @@ class ControlLeaseManager:
                           forward_limit_mps=forward_limit_mps)
         self.acquiring = True
         generation = self.generation
+        ids = diagnostic_context.get()
+        token = diagnostic_context.set({**ids, 'robot_id': robot_id,
+                                        'run_id': run_id if purpose == 'navigation' or forward_limit_mps else None})
         try:
             result = await get_robot_gateway(address).control_lease(lease.request("acquire"))
             if generation != self.generation or not self.matches(result, lease):
                 await self.stop_remote(lease)
                 raise RuntimeError("控制器未确认租约或停止已发生")
             self.current = lease
+            diagnostic_emit('lease.changed', 'control_lease_acquired', module='control_leases',
+                            details={'lease_purpose': purpose})
             return lease
         finally:
+            diagnostic_context.reset(token)
             self.acquiring = False
 
     @staticmethod
