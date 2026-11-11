@@ -86,7 +86,14 @@ async def run_tool(name, args, db, user, binding):
     if name == 'get_vision_status':
         require(user, 'robots.read')
         from .system_health import vision_status
-        return await vision_status(binding)
+        result = await vision_status(binding)
+        from .assistant_provider import configured_vision_provider, ProviderUnavailable
+        try:
+            configured_vision_provider()
+            result['image_analysis'] = {'available': True}
+        except ProviderUnavailable:
+            result['image_analysis'] = {'available': False, 'reason': '暂未配置可用的图片分析模型'}
+        return result
     if name == 'inspect_camera_frame':
         require(user, 'robots.read')
         from .assistant_provider import configured_vision_provider, ProviderUnavailable

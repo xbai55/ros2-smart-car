@@ -12,6 +12,12 @@ from .control_leases import control_lease_manager
 from .robot_context import robot_context_service, vehicle_binding
 
 
+class SearchRequestRejected(HTTPException):
+    """An explicit validation rejection, not a lost dispatch acknowledgement."""
+    def __init__(self):
+        super().__init__(422, '搜索请求被车端拒绝，请检查目标名称或英文提示词')
+
+
 async def execute_search(db, binding, user, operation, payload, *, guard=None, trial_context=None):
     if not {"robots.control", "patrol.manage"} <= user.permissions:
         raise HTTPException(403, "缺少机器人控制或巡检管理权限")
@@ -76,6 +82,10 @@ async def execute_search(db, binding, user, operation, payload, *, guard=None, t
         result = await gateway.search_request(run_id, operation=operation, payload=wire)
     except (httpx.HTTPError, ValueError, RuntimeError) as exc:
         result = None
+        if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in {400, 422}:
+            if lease:
+                await control_lease_manager.release_run(run_id, lease=lease)
+            raise SearchRequestRejected() from exc
         if dispatching and (operation == "start" or action in {"resume", "continue"}):
             try:
                 found = await gateway.search_request(run_id)

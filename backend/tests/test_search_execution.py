@@ -82,3 +82,19 @@ def test_unaccepted_capability_and_client_lease_are_denied(search_dispatch):
         dispatch({"run_id": "search-1", "travel": "patrol", "control_lease": {}})
     assert error.value.status_code == 422
     assert state.calls == ["get"]
+
+
+@pytest.mark.parametrize('status', [400, 422])
+def test_explicit_rejection_does_not_query_missing_run(search_dispatch, monkeypatch, status):
+    state, dispatch = search_dispatch
+    async def request(run_id, *, operation=None, payload=None):
+        state.calls.append(operation or 'get')
+        if operation is None:
+            return None
+        response = httpx.Response(status, request=httpx.Request('POST', 'http://test/api/search/start'))
+        raise httpx.HTTPStatusError('rejected', request=response.request, response=response)
+    monkeypatch.setattr(search_execution, 'get_robot_gateway', lambda _: NS(search_request=request))
+    with pytest.raises(search_execution.SearchRequestRejected):
+        dispatch()
+    assert state.calls == ['get', 'lease', 'start']
+    assert state.released == ['search-1']

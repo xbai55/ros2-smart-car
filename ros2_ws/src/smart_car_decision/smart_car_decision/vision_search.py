@@ -4,7 +4,10 @@ import json
 import math
 from collections import deque
 
-PRESETS = {'服务器': ['server rack'], '服务器机柜': ['server rack'], '示波器': ['oscilloscope'],
+PRESETS = {'手机': ['cell phone'], '电话': ['cell phone'], '水瓶': ['bottle'], '瓶子': ['bottle'],
+           '杯子': ['cup'], '背包': ['backpack'], '书包': ['backpack'], '椅子': ['chair'],
+           '书': ['book'], '笔记本电脑': ['laptop'], '键盘': ['keyboard'], '鼠标': ['mouse'],
+           '服务器': ['server rack'], '服务器机柜': ['server rack'], '示波器': ['oscilloscope'],
            '实验电源': ['laboratory power supply'], '显微镜': ['microscope'],
            '实验器材': ['oscilloscope', 'laboratory power supply', 'microscope']}
 CLUTTER = ['bottle', 'cardboard box', 'bag', 'backpack', 'chair']

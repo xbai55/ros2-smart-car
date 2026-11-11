@@ -22,11 +22,12 @@ def main():
     parser.add_argument('--previous', required=True)
     parser.add_argument('--activate', action='store_true')
     args = parser.parse_args()
-    version = '4.0.1'
+    import runpy
+    version = runpy.run_path(str(ROOT/'desktop/insightrover_desktop/__init__.py'))['VERSION']
     subprocess.run([sys.executable, str(ROOT/'scripts/package_vision_source.py')], check=True)
     archive = ROOT/f'releases/v{version}/InsightRover-Vehicle-{version}-source.tar.gz'
     sha = digest(archive)
-    target = '/home/jetson/insightrover-v401-agent-'+sha[:12]
+    target = '/home/jetson/insightrover-v'+version.replace('.', '')+'-agent-'+sha[:12]
     output = ROOT/'output/agent-extension-deployment'
     output.mkdir(parents=True, exist_ok=True)
     fall = ROOT/'ros2_ws/src/smart_car_decision/models/yolo11-fall.pt'

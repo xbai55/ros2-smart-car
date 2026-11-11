@@ -96,3 +96,9 @@ def test_disabled_model_does_not_require_missing_weight(tmp_path):
     cfg = load_config(tmp_path/'config.json', {'enabled': True, 'models': [{'path': 'missing.pt', 'enabled': False,
                       'class_map': {'fallen': 'fallen_person'}}]})
     assert cfg['models'][0]['enabled'] is False
+
+
+@pytest.mark.parametrize('label,prompt', [('手机','cell phone'),('水瓶','bottle'),('背包','backpack')])
+def test_common_chinese_search_targets(label, prompt):
+    from smart_car_decision.vision_search import targets
+    assert targets([{'name': label}]) == [{'name': label, 'prompt': prompt}]

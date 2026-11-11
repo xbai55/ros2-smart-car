@@ -20,7 +20,7 @@ from .diagnostics import emit as diagnostic_emit
 from .assistant_execution import emit_event, execution_view, request_cancellation, step_permission, validate_steps
 from .control_leases import control_lease_manager
 from .robot_context import robot_context_service, vehicle_binding
-from .search_execution import execute_search
+from .search_execution import execute_search, SearchRequestRejected
 
 logger = logging.getLogger(__name__)
 TERMINAL = {"completed", "cancelled", "failed"}
@@ -291,7 +291,11 @@ class AssistantWorker:
                 db.rollback()
                 current = db.get(AssistantExecution, ident)
                 if current and current.version in {initial_version, initial_version + 1}:
-                    if current.state == "dispatching":
+                    if current.state == 'dispatching' and isinstance(exc, SearchRequestRejected):
+                        if current.run_id:
+                            await control_lease_manager.release_run(current.run_id)
+                        transition(db, current, current.version, 'failed', message=exc.detail)
+                    elif current.state == "dispatching":
                         if current.run_id:
                             await control_lease_manager.release_run(current.run_id)
                         transition(db, current, current.version, "unconfirmed",
