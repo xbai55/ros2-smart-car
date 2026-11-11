@@ -1,0 +1,17 @@
+{
+  "name": "YOLO11 Human Fall Detection",
+  "filename": "yolo11-fall.pt",
+  "repository": "https://huggingface.co/melihuzunoglu/human-fall-detection",
+  "revision": "97261b03632a9715a27481b2cfdac6a78e26d2d9",
+  "url": "https://huggingface.co/melihuzunoglu/human-fall-detection/resolve/97261b03632a9715a27481b2cfdac6a78e26d2d9/best.pt",
+  "sha256": "3f56ad30358d5c63bf8dbc0c1299cf68818c3d291dfb10c94107b94110aadd4c",
+  "size_bytes": 5472282,
+  "parameter_count": 2590425,
+  "distribution": "tracked_in_feature_branch",
+  "license": "agpl-3.0",
+  "classes": {"0": "fallen", "1": "sitting", "2": "standing"},
+  "class_map": {"fallen": "fallen_person"},
+  "confidence": 0.25,
+  "validation": "not_evaluated",
+  "semantics": "Posture detection: fallen includes lying; no intent, fall-transition or floor/bed distinction. Vehicle-view acceptance is pending."
+}

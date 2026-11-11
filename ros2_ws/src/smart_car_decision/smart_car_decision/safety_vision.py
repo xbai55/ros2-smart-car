@@ -33,8 +33,15 @@ def load_config(path, value=None):
     for spec in config.get('models', []):
         if not isinstance(spec, dict) or not isinstance(spec.get('path'), str) or not isinstance(spec.get('class_map'), dict):
             raise ValueError('专项模型配置无效')
-        model_path = Path(spec['path']).expanduser()
-        model_path = model_path if model_path.is_absolute() else path.parent / model_path
+        raw_model_path = Path(spec['path']).expanduser()
+        model_path = raw_model_path if raw_model_path.is_absolute() else path.parent / raw_model_path
+        if not model_path.is_file() and not raw_model_path.is_absolute():
+            # A checked-in model is installed beside the package config by
+            # setup.py. This also lets a copied ~/.ros config use the tracked
+            # model without a second manual weight-copy step.
+            bundled = Path(__file__).resolve().parents[1] / 'models' / raw_model_path.name
+            if bundled.is_file():
+                model_path = bundled
         if not model_path.is_file() or model_path.suffix not in {'.pt', '.engine', '.onnx'}:
             raise ValueError(f'专项模型文件不存在：{model_path}')
         spec['path'] = str(model_path.resolve())
@@ -42,6 +49,14 @@ def load_config(path, value=None):
             raise ValueError('专项模型须显式配置烟火/倒地标签映射')
         if not .05 <= float(spec.get('confidence', .5)) <= 1:
             raise ValueError('模型置信阈值无效')
+        expected = spec.get('sha256')
+        if expected is not None and (not isinstance(expected, str) or len(expected) != 64 or
+                                     any(c not in '0123456789abcdef' for c in expected)):
+            raise ValueError('模型 SHA256 配置无效')
+        if expected is not None:
+            actual = hashlib.sha256(model_path.read_bytes()).hexdigest()
+            if actual != expected:
+                raise ValueError(f'模型 SHA256 不匹配：{model_path}')
     zones = config.get('corridors', [])
     if not isinstance(zones, list) or len(zones) > 30 or any(not isinstance(z, dict) for z in zones):
         raise ValueError('通道配置须为最多30个区域的列表')
@@ -58,6 +73,34 @@ def load_config(path, value=None):
         if len(polygon) < 3 or len(polygon) > 30 or any(len(p) != 2 or not all(type(v) in (int, float) and math.isfinite(v) for v in p) for p in polygon):
             raise ValueError('通道边界须为至少三个地图米制坐标点')
     return config
+
+
+def predict_specialists(models, frame, config):
+    """Every head sees the same unannotated image; draw only after all inference."""
+    import cv2
+    candidates, timings = [], []
+    for spec, model, digest in models:
+        started = time.perf_counter()
+        result = model.predict(frame.copy(), imgsz=640, rect=False, iou=.7,
+                               conf=float(spec.get('confidence', .5)),
+                               device=config.get('device', '0'), verbose=False)[0]
+        for box in result.boxes or []:
+            label = result.names[int(box.cls[0])]
+            category = spec['class_map'].get(label)
+            if category:
+                candidates.append({'type': category, 'label': label, 'confidence': float(box.conf[0]),
+                                   'box': [float(v) for v in box.xyxy[0].tolist()], 'model_sha256': digest,
+                                   'validation': spec.get('validation', 'not_evaluated'),
+                                   'method': 'specialist_yolo11_temporal'})
+        timings.append({'model': Path(spec['path']).name, 'sha256': digest,
+                        'inference_ms': round((time.perf_counter() - started) * 1000, 2)})
+    annotated = frame.copy()
+    for candidate in candidates:
+        coords = candidate['box']
+        cv2.rectangle(annotated, tuple(map(int, coords[:2])), tuple(map(int, coords[2:])), (0, 80, 255), 2)
+        cv2.putText(annotated, f"{candidate['label']} {candidate['confidence']:.2f}",
+                    (int(coords[0]), max(18, int(coords[1]))), cv2.FONT_HERSHEY_SIMPLEX, .6, (0, 80, 255), 2)
+    return candidates, annotated, timings
 
 
 class SafetyVisionWorker:
@@ -128,17 +171,21 @@ class SafetyVisionWorker:
             if config.get('models'):
                 from ultralytics import YOLO
                 for spec in config['models']:
+                    digest = hashlib.sha256(Path(spec['path']).read_bytes()).hexdigest()
+                    if spec.get('sha256') and digest != spec['sha256']:
+                        raise ValueError(f"模型 SHA256 不匹配：{spec['path']}")
                     model = YOLO(spec['path'])
                     names = set(model.names.values())
                     if not set(spec['class_map']).issubset(names):
                         raise ValueError(f"模型标签不匹配：{spec['path']}")
-                    digest = hashlib.sha256(Path(spec['path']).read_bytes()).hexdigest()
                     models.append((spec, model, digest))
             if not models and not config.get('corridors'):
                 self._state(state='unavailable', message='尚未配置烟火/倒地专项权重或通道区域')
                 return
             self._state(models=[{'path': Path(s['path']).name, 'sha256': d, 'classes': s['class_map'],
-                                 'validation': s.get('validation', 'not_evaluated')} for s, _, d in models])
+                                 'model_classes': m.names, 'confidence': float(s.get('confidence', .5)),
+                                 'validation': s.get('validation', 'not_evaluated')} for s, m, d in models],
+                        confirm_sec=config['confirm_sec'])
             self._state(capabilities={category: any(category in s['class_map'].values() for s, _, _ in models)
                                       for category in ('smoke_fire', 'fallen_person')}, configured_corridors=len(config.get('corridors', [])))
             gate = EventGate(config['confirm_sec'], config['clear_sec'], max(1., 2. / config['rate_hz']))
@@ -172,19 +219,7 @@ class SafetyVisionWorker:
                     identity = map_key(grid) if grid else ''
                     pose = status.get('map_pose', {})
                     pose_fresh = self.node.ros_status_age_sec() is not None and self.node.ros_status_age_sec() <= 2.5
-                    for spec, model, digest in models:
-                        result = model.predict(frame, imgsz=640, conf=float(spec.get('confidence', .5)),
-                                               device=config.get('device', '0'), verbose=False)[0]
-                        for box in result.boxes or []:
-                            label = result.names[int(box.cls[0])]
-                            category = spec['class_map'].get(label)
-                            if category:
-                                coords = [float(v) for v in box.xyxy[0].tolist()]
-                                candidates.append({'type': category, 'label': label,
-                                                   'confidence': float(box.conf[0]), 'box': coords, 'model_sha256': digest,
-                                                   'validation': spec.get('validation', 'not_evaluated'), 'method': 'specialist_yolo11_temporal'})
-                                cv2.rectangle(frame, tuple(map(int, coords[:2])), tuple(map(int, coords[2:])), (0, 80, 255), 2)
-                                cv2.putText(frame, label, (int(coords[0]), max(18, int(coords[1]))), cv2.FONT_HERSHEY_SIMPLEX, .6, (0, 80, 255), 2)
+                    candidates, frame, timings = predict_specialists(models, frame, config)
                     candidates = tracks.update(candidates, time.monotonic())
                     with self.lock:
                         points, scan_at = self.scan_points, self.scan_at
@@ -212,12 +247,15 @@ class SafetyVisionWorker:
                                          'occurred_at': datetime.fromtimestamp(snap['captured_at'], timezone.utc).isoformat(),
                                          'task_id': task.get('task_id') if task.get('state') not in {'idle', 'completed', 'failed', 'cancelled'} else None,
                                          'run_id': task.get('run_id'), 'map_key': identity,
+                                         'model_sha256': candidate.get('model_sha256'),
+                                         'position_kind': 'vehicle_not_target',
                                          'pose': pose if pose_fresh and pose.get('ok') else None,
                                          'evidence': candidate}, jpeg.tobytes()))
                     while pending:
                         self.outbox.put(*pending[0])
                         pending.pop(0)
                     self._state(state='running', message='巡检识别运行中；报警不改变巡航', detections=candidates,
+                                model_inference_ms=timings,
                                 updated_at=snap['captured_at'], inference_ms=round((time.monotonic() - started) * 1000, 1))
                     self.stop_event.wait(max(0., 1. / config['rate_hz'] - (time.monotonic() - started)))
                 except Exception as exc:

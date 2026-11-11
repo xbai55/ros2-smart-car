@@ -1,9 +1,15 @@
 {
-  "enabled": false,
+  "enabled": true,
   "device": "0",
   "rate_hz": 5,
   "confirm_sec": 2,
   "clear_sec": 10,
-  "models": [],
+  "models": [{
+    "path": "models/yolo11-fall.pt",
+    "class_map": {"fallen": "fallen_person"},
+    "confidence": 0.25,
+    "sha256": "3f56ad30358d5c63bf8dbc0c1299cf68818c3d291dfb10c94107b94110aadd4c",
+    "validation": "not_evaluated"
+  }],
   "corridors": []
 }
