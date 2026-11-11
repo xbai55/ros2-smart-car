@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { businessApi, clearBusinessSession, createMapRequestId, getBusinessSession, imagePoint, readAssistantEvents } from "../src/services/businessApi.ts";
+import { businessApi, clearBusinessSession, createMapRequestId, getBusinessSession, imagePoint, readAssistantEvents, streamAssistantMessage } from "../src/services/businessApi.ts";
 
 const token = (access = "test-access") => ({ access_token: access, refresh_token: "test-refresh", user: { id: "u1", username: "operator", display_name: "操作员", role: { name: "operator", permissions: [{ name: "maps.manage" }] } } });
 const response = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -51,6 +51,30 @@ test("assistant reconnect replays an unprocessed confirmation and skips duplicat
     assert.deepEqual(urls, ["/api/v1/assistant/events?after=5", "/api/v1/assistant/events?after=5"]);
     assert.deepEqual(received, [6, 7]);
     assert.equal(cursor, 7);
+  } finally { clearBusinessSession(); globalThis.fetch = original; }
+});
+
+test("a broken reply stream keeps received deltas and requires a real final response", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async (path, options) => {
+    if (String(path).endsWith("/login")) return response(token());
+    assert.equal(path, "/api/v1/assistant/sessions/session-a/messages/stream");
+    assert.deepEqual(JSON.parse(String(options?.body)), {client_id: "same-id", text: "问题"});
+    const bytes = new TextEncoder().encode('data: {"kind":"delta","text":"流"}\n\n');
+    return new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(bytes.slice(0, -5));
+        controller.enqueue(bytes.slice(-5));
+        controller.close();
+      },
+    }));
+  };
+  try {
+    await businessApi.login("operator", "password");
+    const events: unknown[] = [];
+    await assert.rejects(streamAssistantMessage("session-a", "same-id", "问题",
+      event => events.push(event), new AbortController().signal), /连接中断/);
+    assert.deepEqual(events, [{kind: "delta", text: "流"}]);
   } finally { clearBusinessSession(); globalThis.fetch = original; }
 });
 

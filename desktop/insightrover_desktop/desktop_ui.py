@@ -93,7 +93,7 @@ def configure_credentials(root, config):
     dialog.title("车端与助手凭据")
     dialog.transient(root)
     dialog.grab_set()
-    dialog.minsize(500, 410)
+    dialog.minsize(520, 650)
     box = ttk.Frame(dialog, style="Card.TFrame", padding=22)
     box.pack(fill="both", expand=True)
     ttk.Label(box, text="车端与助手凭据", style="Title.TLabel").pack(anchor="w")
@@ -105,15 +105,23 @@ def configure_credentials(root, config):
         ("assistant_url", "模型 HTTPS API 地址", False),
         ("assistant_model", "模型名称", False),
         ("assistant_key", "模型 API 密钥", True),
+        ("vision_url", "可选视觉模型 HTTPS API 地址", False),
+        ("vision_model", "可选视觉模型名称", False),
+        ("vision_key", "可选视觉模型 API 密钥", True),
     ):
         fields[key] = tk.StringVar(value="" if secret else saved.get(key, ""))
         ttk.Label(box, text=label + ("（已保存）" if secret and saved.get(key) else ""),
                   style="Card.TLabel").pack(anchor="w", pady=(6, 3))
         ttk.Entry(box, textvariable=fields[key], show="●" if secret else "").pack(fill="x")
 
+    supports_images = tk.BooleanVar(value=saved.get('assistant_supports_images') == '1')
+    ttk.Checkbutton(box, text='未配置独立视觉模型时，允许支持图片的对话模型分析单帧', variable=supports_images).pack(anchor='w', pady=(8, 0))
+    ttk.Label(box, text='图片仅按需发送至配置的模型服务，不持续上传视频。', style='Hint.TLabel').pack(anchor='w')
+
     def save():
-        values = {key: field.get().strip() for key, field in fields.items()}
-        for key in ("robot_token", "assistant_key"):
+        values = {**saved, **{key: field.get().strip() for key, field in fields.items()}}
+        values['assistant_supports_images'] = '1' if supports_images.get() else '0'
+        for key in ("robot_token", "assistant_key", "vision_key"):
             values[key] = values[key] or saved.get(key, "")
         try:
             if values["robot_token"] and (len(values["robot_token"]) < 32
@@ -122,6 +130,10 @@ def configure_credentials(root, config):
                 raise ValueError("车端凭据至少 32 个 ASCII 字符，不能含空格")
             if any(values[key] for key in ("assistant_url", "assistant_model", "assistant_key")):
                 ChatCompletionsProvider(values["assistant_url"], values["assistant_model"], values["assistant_key"])
+            if values['vision_url'] or values['vision_model']:
+                ChatCompletionsProvider(values['vision_url'], values['vision_model'], values['vision_key'])
+            else:
+                values['vision_key'] = ''
             write_credentials(config.credential_profile, values)
         except (CredentialError, ProviderUnavailable, ValueError) as exc:
             messagebox.showerror("凭据未保存", str(exc), parent=dialog)

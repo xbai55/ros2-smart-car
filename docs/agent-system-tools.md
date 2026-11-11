@@ -1,0 +1,62 @@
+# Agent 任务执行与系统诊断（4.0.1）
+
+本版合并 `feature/insightrover-v4-fall-yolo11`，保留倒地模型来源、哈希、`fallen → fallen_person` 映射、0.25 阈值与未验收状态。烟火和倒地专项模型始终对同一张未标注原始帧推理，随后绘图。
+
+## 使用方式
+
+- “沿实验室路线巡检”：查询保存路线后通过原执行器直接提交；有歧义时询问。
+- “先给我巡检计划”：只生成草案，保留页面确认入口。
+- “暂停当前任务”“恢复当前任务”“取消任务”：先查询本人唯一活动任务及版本，再操作。运输装件、交接和搜索命中后的继续执行仍需人工处理。
+- “为什么小车不动”“倒地模型正常吗”：读取当前状态、停车条件与脱敏日志，区别历史错误和当前问题。
+- “看看相机里有什么”：发送最新单帧至已配置视觉模型；未配置时明确不可用。
+- “将倒地阈值设置为0.25”“恢复摄像头”：仅在当前用户明确要求、车辆新鲜里程计确认静止且没有活动任务时执行。
+
+任务仍受当前账号权限、车端版本、控制租约、地图和资源版本、能力验收约束。扩大工具范围不解除急停、不改变运动保护、不自动登记验收，也不允许任意命令。
+
+## 工具
+
+保留原9个工具，并增加 `get_system_health`、`query_system_logs`、`get_vision_status`、`inspect_camera_frame`、`execute_plan`、`control_execution`、`stop_robot`、`update_vision_settings`、`recover_vision`。`get_robot_context` 扩充状态摘要；`get_execution` 可省略编号以查本人唯一活动执行，并返回版本。
+
+`execute_plan` 复用现有6种动作、最多6步及真实资源引用。调用上限为6轮、16次、90秒。对话结束不代表任务完成；实际状态以执行器回执为准。修改操作以用户消息和工具名生成持久化幂等标识，重复调用返回原回执，参数改变被拒绝。结果未确认时查询状态，不能盲目重发。同一车辆的任务提交与视觉维护在后台串行；停车不受维护锁阻挡。
+
+## 接口
+
+所有车端接口继续要求机器鉴权；后台工具不能指定任意目标地址。
+
+| 接口 | 内容 |
+|---|---|
+| `GET /api/v1/assistant/system-health` | 当前系统问题、历史恢复记录、诊断证据；需要 `diagnostics.read` 与 `robots.read` |
+| `GET /api/vision/health` | 摄像头、YOLOE、专项模型状态与可修改设置 |
+| `GET /api/vision/snapshot` | 采集时间、序号、单帧JPEG；最长边1280像素，拒绝超过2秒的旧画面 |
+| `POST /api/safety/settings` | `{operation_id, component, settings}`；component为`yoloe`或`safety` |
+| `POST /api/vision/recover` | `{operation_id, target}`；target为`camera`、`yoloe`或`safety` |
+
+专项 `settings` 支持总开关 `enabled`、`confirm_sec`、`clear_sec`、`models: [{id, enabled?, confidence?}]`。模型标识先从状态读取；不接受路径、哈希、类别映射或下载地址修改。已有通用设置仍仅支持 `enabled`、`clutter_enabled`、`clutter_prompts`、`imgsz`，由现有校验器验证。
+
+恢复操作确认旧线程或进程退出后再重建，保留 outbox。存在未落盘证据、线程未退出、状态不新鲜或任务未结束时拒绝恢复。恢复后核对新画面和模型状态；不可用时不循环重试。恢复代际进入视觉能力指纹，旧验收保留但不能直接匹配新版状态；移动性能证书也需匹配新代际。
+
+## 系统问题与日志
+
+系统问题单独存入 `system_problems`，通知类型为 `system_problem`，不写入巡检 `incidents`。连续3次观察后提示故障、连续5次正常后标记恢复；任务明确失败立即提示。通知按车辆、组件和原因去重。助手卡片及基础提示不依赖LLM在线。
+
+页面与工具共用日志权限与脱敏规则。默认查询最近15分钟，每页最多50条，最长14天；翻页需携带返回的 `start`、`end` 和 `next_cursor`。时间偏差或采集延迟只提示关联不确定，不据此断言因果。磁盘容量和温度等未采集量显示未知。
+
+后台自动创建新增表 `assistant_tool_operations`、`assistant_tool_locks`、`system_problems`，不清理原任务、账户、地图或验收历史。权限沿用现有用户角色，不自动提高账号权限。
+
+## 可选视觉模型
+
+桌面连接窗口的“车端与助手凭据”可填写独立视觉模型地址、名称与密钥，保存在 Windows 凭据管理器。也可显式允许支持图片的对话模型分析单帧。图片只在调用看图工具时发送至配置的模型服务。
+
+非桌面环境可配置：
+
+```text
+ASSISTANT_VISION_BASE_URL=https://your-provider.example/v1
+ASSISTANT_VISION_MODEL=your-image-capable-model
+ASSISTANT_VISION_API_KEY=由运行环境安全提供
+```
+
+没有独立视觉配置时，仅 `ASSISTANT_SUPPORTS_IMAGES=1` 才允许复用对话模型。独立视觉配置不完整时返回不可用，不静默切换提供商。不要将密钥提交至Git。
+
+## 验证边界
+
+本地测试覆盖权限、日志脱敏与分页、直接执行与验收阻断、重复请求及回执丢失、故障去重恢复、权重哈希、安装目录解析、共享原始帧、静止维护限制及证据保留。实车部署后另记录静止检查；导航、运输、移动搜索、烟火及倒地准确率均不能由代码合并或服务启动推定通过。

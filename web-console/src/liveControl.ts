@@ -13,7 +13,7 @@ export function canDrive(status: RobotStatus, connected: boolean, robotId = LIVE
   return robotId === LIVE_ROBOT_ID && connected && !status.emergency_stop && (status.mode === "manual" || status.mode === "mapping" && !initializing);
 }
 export const DRIVE_KEYS: Record<string, string> = { w: "forward", ArrowUp: "forward", s: "backward", ArrowDown: "backward", a: "left", ArrowLeft: "left", d: "right", ArrowRight: "right", q: "turn_l", e: "turn_r" };
-export const DRIVE_PROTECTED_TARGETS = "input,textarea,select,[contenteditable=true],[role=dialog],[role=slider]";
+export const DRIVE_PROTECTED_TARGETS = "input,textarea,select,[contenteditable=true],[role=dialog],[role=slider],[data-assistant-launcher]";
 export function driveKeyCommand(event: Pick<KeyboardEvent, "key" | "defaultPrevented" | "ctrlKey" | "metaKey" | "altKey">, protectedTarget = false) {
   if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || protectedTarget) return null;
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;

@@ -110,6 +110,16 @@ def create_robot(
     return serialize_robot(robot)
 
 
+@router.get("/bound-context")
+def bound_robot_context(db: Session = Depends(get_db), _: User = Depends(require_permission("robots.read"))):
+    binding = vehicle_binding(db)
+    robot = db.get(Robot, binding[0])
+    if robot is None:
+        return {"robot_id": binding[0], "name": None, "available": False,
+                "reason": "robot_not_bound", "telemetry": None}
+    return {"name": robot.name, **robot_context_service.context(robot.id, binding)}
+
+
 @router.get("/{robot_id}")
 def get_robot(
     robot_id: str,

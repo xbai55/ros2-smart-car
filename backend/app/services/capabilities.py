@@ -31,7 +31,7 @@ def evaluate_capabilities(context, acceptances):
         identity = {"robot_id": context["robot_id"], "capability": name,
                     "manifest": manifest, "map_key": telemetry.get("active_map_key")}
         if visual:
-            identity["vision"] = {key: vision.get(key) for key in ("build_id", "model_sha256", "imgsz")}
+            identity["vision"] = {key: vision.get(key) for key in ("build_id", "model_sha256", "imgsz", "recovery_epoch")}
         try:
             fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True, allow_nan=False).encode()).hexdigest()
         except (TypeError, ValueError):

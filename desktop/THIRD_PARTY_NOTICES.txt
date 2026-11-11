@@ -1740,7 +1740,7 @@ IN THE SOFTWARE.
 
 
 ========================================================================
-packaging 23.2
+packaging 26.3
 
 LICENSE
 This software is made available under the terms of *either* of the licenses

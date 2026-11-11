@@ -47,6 +47,38 @@ class AssistantPlan(Base):
     expires_at: Mapped[int] = mapped_column(Integer)
 
 
+class AssistantToolLock(Base):
+    __tablename__ = "assistant_tool_locks"
+    robot_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner: Mapped[str | None] = mapped_column(String(64))
+    expires_at: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class AssistantToolOperation(Base):
+    """Durable at-most-once receipt, independent of the model's final reply."""
+    __tablename__ = "assistant_tool_operations"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    turn_id: Mapped[str] = mapped_column(ForeignKey("assistant_turns.id"), index=True)
+    name: Mapped[str] = mapped_column(String(48))
+    request: Mapped[str] = mapped_column(Text)
+    result: Mapped[str] = mapped_column(Text, default="{}")
+    state: Mapped[str] = mapped_column(String(24), default="unconfirmed")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SystemProblem(Base):
+    __tablename__ = "system_problems"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    robot_id: Mapped[str] = mapped_column(String(36), index=True)
+    code: Mapped[str] = mapped_column(String(96))
+    state: Mapped[str] = mapped_column(String(24), default="pending")
+    failures: Mapped[int] = mapped_column(Integer, default=0)
+    successes: Mapped[int] = mapped_column(Integer, default=0)
+    first_seen: Mapped[str] = mapped_column(String(36))
+    last_seen: Mapped[str] = mapped_column(String(36))
+    details: Mapped[str] = mapped_column(Text, default="{}")
+
+
 class AssistantConfiguration(Base):
     __tablename__ = "assistant_configuration"
 

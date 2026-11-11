@@ -53,7 +53,7 @@ class VisionService:
                     self._state('fault', '车端重启，旧搜索已停止，请结束后重新创建')
             except Exception:
                 self.search.update(state='fault',message='搜索记录损坏，保持停车')
-        self.status = {'supported':True,'stationary_search_supported':True,'state':'unavailable','message':'等待本地模型','build_id':BUILD,'detections':[], 'mobile_ready':False,'imgsz':self.config['imgsz']}
+        self.status = {'supported':True,'stationary_search_supported':True,'state':'unavailable','message':'等待本地模型','build_id':BUILD,'detections':[], 'mobile_ready':False,'imgsz':self.config['imgsz'],'recovery_epoch':self.config.get('recovery_epoch')}
         if self.config_error:self.status.update(state='error',message='视觉配置无效：'+self.config_error)
         self.confirm = Confirmation()
         self.context = mp.get_context('spawn')
@@ -184,7 +184,8 @@ class VisionService:
     def _certified(self):
         try:
             certificate=json.loads((self.root/'vision-performance.json').read_text())
-            return (certificate.get('build_id')==BUILD and certificate.get('imgsz')==self.config['imgsz']
+            return (certificate.get('recovery_epoch') == self.config.get('recovery_epoch')
+                    and certificate.get('build_id')==BUILD and certificate.get('imgsz')==self.config['imgsz']
                     and certificate.get('source_sha256')==component_manifest()['source_sha256']
                     and self.status.get('state')=='running'
                     and certificate.get('model_sha256')==self.status.get('model_sha256')
@@ -501,7 +502,7 @@ class VisionService:
                         self.sequence=snap['sequence'];self.last_submit=now
                         prompts=self._prompts()
                         replace_latest(self.requests,{**snap,'captured_mono':now-snap['age_ms']/1000,
-                            'run_id':self.search.get('run_id'),'version':vocabulary_id(prompts),'prompts':prompts,'imgsz':self.config['imgsz']})
+                            'run_id':self.search.get('run_id'),'version':vocabulary_id(prompts),'prompts':prompts,'imgsz':self.config['imgsz'],'recovery_epoch':self.config.get('recovery_epoch')})
             except Exception as exc:
                 with self.lock:
                     self.status.update(state='error',message=str(exc),mobile_ready=False)

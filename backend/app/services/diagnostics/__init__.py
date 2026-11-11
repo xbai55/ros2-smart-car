@@ -31,6 +31,8 @@ DETAIL = {
     "target", "exit_code", "failures", "controller_id", "control_epoch",
 }
 CODES = {
+    "vision.state": "视觉组件状态变化",
+    "camera.state": "摄像头状态变化",
     "http.completed": "HTTP 请求结束",
     "http.failed": "HTTP 请求处理失败",
     "host.started": "主机服务启动",

@@ -528,6 +528,46 @@ def create_app(
 ):
     """构造车端 FastAPI 应用（不依赖 ROS2，便于测试）。"""
     app = FastAPI(title="InsightRover 车端 Web Node", version=SERVICE_VERSION)
+    @app.middleware('http')
+    async def maintenance_guard(request, call_next):
+        if (getattr(node, 'vision_maintenance_active', False) and request.method == 'POST'
+                and request.url.path not in {'/api/stop', '/api/emergency-stop'}):
+            from fastapi.responses import JSONResponse
+            return JSONResponse({'detail': '视觉维护中，暂不接受新控制请求'}, status_code=409)
+        return await call_next(request)
+
+    from .vision_admin import VisionAdmin
+    admin = VisionAdmin(node, camera)
+
+    @app.get('/api/vision/health')
+    def vision_health():
+        return admin.status()
+
+    @app.get('/api/vision/snapshot')
+    def vision_snapshot():
+        try:
+            return admin.frame()
+        except RuntimeError as exc:
+            raise HTTPException(503, str(exc)) from exc
+
+    @app.post('/api/safety/settings')
+    def safety_settings(payload: dict = Body(...)):
+        try:
+            return admin.mutate('settings', payload)
+        except (ValueError, TypeError, KeyError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.post('/api/vision/recover')
+    def vision_recover(payload: dict = Body(...)):
+        try:
+            return admin.mutate('recover', payload)
+        except (ValueError, TypeError, KeyError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
     from .service_auth import ServiceAuthentication
     app.add_middleware(ServiceAuthentication)
     from .lease_bridge import LeaseBridge

@@ -40,23 +40,39 @@ def load_config(path, value=None):
             # setup.py. This also lets a copied ~/.ros config use the tracked
             # model without a second manual weight-copy step.
             bundled = Path(__file__).resolve().parents[1] / 'models' / raw_model_path.name
-            if bundled.is_file():
+            try:
+                from ament_index_python.packages import get_package_share_directory
+                installed = Path(get_package_share_directory('smart_car_decision')) / 'models' / raw_model_path.name
+            except (ImportError, LookupError):
+                installed = bundled
+            if installed.is_file():
+                model_path = installed
+            elif bundled.is_file():
                 model_path = bundled
-        if not model_path.is_file() or model_path.suffix not in {'.pt', '.engine', '.onnx'}:
+        if type(spec.get('enabled', True)) is not bool:
+            raise ValueError('模型开关须为布尔值')
+        spec.setdefault('id', hashlib.sha256(str(model_path.resolve()).encode()).hexdigest()[:16])
+        if not spec['id'] or not isinstance(spec['id'], str):
+            raise ValueError('模型标识无效')
+        active = config.get('enabled', True) and spec.get('enabled', True)
+        if active and (not model_path.is_file() or model_path.suffix not in {'.pt', '.engine', '.onnx'}):
             raise ValueError(f'专项模型文件不存在：{model_path}')
         spec['path'] = str(model_path.resolve())
         if not spec.get('class_map') or any(v not in TITLES or v == 'blocked_passage' for v in spec['class_map'].values()):
             raise ValueError('专项模型须显式配置烟火/倒地标签映射')
-        if not .05 <= float(spec.get('confidence', .5)) <= 1:
+        if type(spec.get('confidence', .5)) not in (float, int) or not .05 <= spec.get('confidence', .5) <= 1:
             raise ValueError('模型置信阈值无效')
         expected = spec.get('sha256')
         if expected is not None and (not isinstance(expected, str) or len(expected) != 64 or
                                      any(c not in '0123456789abcdef' for c in expected)):
             raise ValueError('模型 SHA256 配置无效')
-        if expected is not None:
+        if active and expected is not None:
             actual = hashlib.sha256(model_path.read_bytes()).hexdigest()
             if actual != expected:
                 raise ValueError(f'模型 SHA256 不匹配：{model_path}')
+    ids = [spec['id'] for spec in config.get('models', [])]
+    if len(ids) != len(set(ids)):
+        raise ValueError('模型标识重复')
     zones = config.get('corridors', [])
     if not isinstance(zones, list) or len(zones) > 30 or any(not isinstance(z, dict) for z in zones):
         raise ValueError('通道配置须为最多30个区域的列表')
@@ -157,7 +173,13 @@ class SafetyVisionWorker:
 
     def _state(self, **values):
         with self.lock:
+            previous = self.status.get('state')
             self.status.update(values)
+        if values.get('state') and previous != values['state']:
+            sink = getattr(self.node, 'diagnostic_log', None)
+            if sink:
+                sink.emit('vision.state', 'safety_' + values['state'],
+                          level='ERROR' if values['state'] in {'error', 'degraded'} else 'INFO')
 
     def _run(self, config_path):
         try:
@@ -171,6 +193,8 @@ class SafetyVisionWorker:
             if config.get('models'):
                 from ultralytics import YOLO
                 for spec in config['models']:
+                    if not spec.get('enabled', True):
+                        continue
                     digest = hashlib.sha256(Path(spec['path']).read_bytes()).hexdigest()
                     if spec.get('sha256') and digest != spec['sha256']:
                         raise ValueError(f"模型 SHA256 不匹配：{spec['path']}")
@@ -180,9 +204,9 @@ class SafetyVisionWorker:
                         raise ValueError(f"模型标签不匹配：{spec['path']}")
                     models.append((spec, model, digest))
             if not models and not config.get('corridors'):
-                self._state(state='unavailable', message='尚未配置烟火/倒地专项权重或通道区域')
+                self._state(state='disabled' if config.get('models') else 'unavailable', message='专项模型均未启用' if config.get('models') else '尚未配置烟火/倒地专项权重或通道区域')
                 return
-            self._state(models=[{'path': Path(s['path']).name, 'sha256': d, 'classes': s['class_map'],
+            self._state(models=[{'id': s['id'], 'enabled': True, 'path': Path(s['path']).name, 'sha256': d, 'classes': s['class_map'],
                                  'model_classes': m.names, 'confidence': float(s.get('confidence', .5)),
                                  'validation': s.get('validation', 'not_evaluated')} for s, m, d in models],
                         confirm_sec=config['confirm_sec'])

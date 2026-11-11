@@ -17,6 +17,10 @@ from .robot_context import robot_context_service, vehicle_binding
 
 
 def emit_event(db, owner, kind, payload):
+    if kind.startswith("execution.") and "session_id" not in payload:
+        plan = db.get(AssistantPlan, payload["plan_id"])
+        if plan is not None:
+            payload = {**payload, "session_id": plan.session_id}
     db.add(AssistantEvent(user_id=owner, kind=kind,
                           execution_id=payload.get('id') if kind.startswith('execution.') else None,
                           payload=json.dumps(payload, ensure_ascii=False)))

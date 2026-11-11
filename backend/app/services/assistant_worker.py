@@ -39,6 +39,12 @@ def transition(db, row, version, state, **changes):
             value["session_id"] = db.get(AssistantPlan, current.plan_id).session_id
         emit_event(db, current.user_id, "execution." + state, value)
     db.commit()
+    if current is not None and state in {'failed', 'paused'} and changes.get('message'):
+        from .system_health import observe_problems
+        code = 'task.' + current.id
+        observe_problems(db, current.robot_id, {code: {'code': code, 'message': '任务停止或执行失败',
+            'impact': '任务未完成，需核对执行记录', 'suggestion': '查看本次任务诊断链路',
+            'execution_id': current.id, 'status': 'observed', 'root_cause_confirmed': False}}, immediate=True)
     if current is not None:
         diagnostic_emit('assistant.execution', state, module='assistant_worker',
                         execution_id=current.id, robot_id=current.robot_id, run_id=value['run_id'], task_id=current.task_id,
@@ -227,7 +233,7 @@ class AssistantWorker:
         guard()
         if row.run_kind == "search":
             result = await execute_search(db, vehicle_binding(db), user, "action",
-                                          {"run_id": row.run_id, "action": "resume" if action == "resume" else "finish"}, guard=guard)
+                                          {"run_id": row.run_id, "action": action if action in {"resume", "pause"} else "finish"}, guard=guard)
         else:
             result = await navigation_tasks.apply_execution_action(row.run_kind, row.task_id, {
                 "run_id": row.run_id, "action": action}, db, user, guard=guard)

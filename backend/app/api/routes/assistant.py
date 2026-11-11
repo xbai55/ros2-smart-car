@@ -46,7 +46,7 @@ class ConfirmIn(BaseModel):
 
 class ExecutionActionIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    action: Literal["cancel", "loaded", "handover", "continue_plan", "resume"]
+    action: Literal["cancel", "loaded", "handover", "continue_plan", "resume", "pause"]
     version: int | None = Field(default=None, ge=1)
 
 
@@ -61,15 +61,25 @@ def turn_view(turn, user):
     reply = json.loads(turn.reply) if turn.reply else None
     if reply and reply.get("report_id") and "incidents.read" not in user.permissions:
         reply = {"text": "当前账号无权读取此异常报告。", "plan": reply.get("plan")}
+    if reply and reply.get("tools"):
+        for tool in reply["tools"]:
+            kind = tool.get("result", {}).get("kind")
+            if ((kind == "robot" and "robots.read" not in user.permissions)
+                    or (kind == "incidents" and "incidents.read" not in user.permissions)
+                    or (kind == "system" and not {"robots.read", "diagnostics.read"} <= user.permissions)):
+                del tool["result"]
     return {"id": turn.id, "client_id": turn.client_id, "text": turn.prompt,
             "reply": reply}
 
 
 @router.get("/sessions")
 def sessions(db: Session = Depends(get_db), user: User = Depends(require_permission("assistant.read"))):
-    rows = db.scalars(select(AssistantSession).where(AssistantSession.user_id == user.id)
-                      .order_by(AssistantSession.created_at.desc()).limit(50)).all()
-    return {"items": [{"id": row.id, "created_at": row.created_at} for row in rows]}
+    first_prompt = (select(AssistantTurn.prompt).where(AssistantTurn.session_id == AssistantSession.id)
+                    .order_by(AssistantTurn.created_at, AssistantTurn.id).limit(1).scalar_subquery())
+    rows = db.execute(select(AssistantSession, first_prompt).where(AssistantSession.user_id == user.id)
+                      .order_by(AssistantSession.created_at.desc()).limit(50))
+    return {"items": [{"id": row.id, "created_at": row.created_at, "title": prompt[:64] if prompt else None}
+                      for row, prompt in rows]}
 
 
 @router.post("/sessions", status_code=201)
@@ -106,6 +116,45 @@ def messages(session_id: str, db: Session = Depends(get_db),
 @router.post("/sessions/{session_id}/messages")
 async def send_message(session_id: str, payload: MessageIn, db: Session = Depends(get_db),
                        user: User = Depends(require_permission("assistant.use"))):
+    return await run_message(session_id, payload, db, user)
+
+
+@router.post("/sessions/{session_id}/messages/stream")
+async def stream_message(session_id: str, payload: MessageIn, db: Session = Depends(get_db),
+                         user: User = Depends(require_permission("assistant.use"))):
+    session_for(db, session_id, user)
+
+    async def stream():
+        events = asyncio.Queue()
+
+        def emit(kind, **data):
+            events.put_nowait({"kind": kind, **data})
+
+        async def produce():
+            try:
+                emit("done", turn=await run_message(session_id, payload, db, user, emit))
+            except HTTPException as exc:
+                emit("error", message=exc.detail, status=exc.status_code)
+
+        task = asyncio.create_task(produce())
+        try:
+            while not task.done() or not events.empty():
+                try:
+                    event = await asyncio.wait_for(events.get(), timeout=1)
+                except TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                yield "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
+            await task
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+async def run_message(session_id, payload, db, user, emit=None):
     session_for(db, session_id, user)
     client_id, owner = str(payload.client_id), user.id
     lookup = select(AssistantTurn).where(AssistantTurn.session_id == session_id, AssistantTurn.client_id == client_id)
@@ -121,12 +170,14 @@ async def send_message(session_id: str, payload: MessageIn, db: Session = Depend
     try:
         provider = configured_provider()
     except ProviderUnavailable as exc:
+        from ...services.system_health import model_observed
+        model_observed(False)
         raise HTTPException(503, str(exc)) from None
     token, now = str(uuid4()), int(time.time())
     claim = db.execute(update(AssistantSession).where(
         AssistantSession.id == session_id, AssistantSession.user_id == owner,
         or_(AssistantSession.turn_key.is_(None), AssistantSession.turn_until <= now),
-    ).values(turn_key=token, turn_until=now + 45))
+    ).values(turn_key=token, turn_until=now + 105))
     if claim.rowcount != 1:
         raise HTTPException(409, "此会话正在处理另一条消息")
     turn = db.scalar(lookup)
@@ -147,11 +198,29 @@ async def send_message(session_id: str, payload: MessageIn, db: Session = Depend
         history.extend([{"role": "user", "content": row.prompt},
                         {"role": "assistant", "content": turn_view(row, user)["reply"]["text"][:2000]}])
     db.commit()
+    from ...services.assistant_operations import current_turn, operation_result
+    from ...models import AssistantToolOperation
+    scope_token = current_turn.set({'turn_id': turn.id, 'session_id': session_id})
     try:
         try:
-            answer, draft, report = await ask(provider, db, user, history, payload.text)
+            tools = []
+
+            def progress(kind, **data):
+                if kind == "tool":
+                    if data["state"] == "running":
+                        tools.append(data)
+                    else:
+                        tools[-1] = data
+                if emit:
+                    emit(kind, **data)
+
+            answer, draft, report = await ask(provider, db, user, history, payload.text, progress, stream=bool(emit))
         except (ProviderUnavailable, TimeoutError, ValueError, KeyError, TypeError, AttributeError):
-            raise HTTPException(502, "模型暂未返回有效答复，可以重试原消息") from None
+            db.rollback()
+            receipts = db.scalars(select(AssistantToolOperation).where(AssistantToolOperation.turn_id == turn.id)).all()
+            if not receipts:
+                raise HTTPException(502, "模型暂未返回有效答复，可以重试原消息；系统状态仍可查询") from None
+            answer, draft, report = '模型回复中断，操作记录已保留。请查看下方结果；未确认的操作不能重复派发。', None, None
         db.expire_all()
         if not user.active or "assistant.use" not in user.permissions:
             raise HTTPException(403, "助手权限已变化")
@@ -161,6 +230,14 @@ async def send_message(session_id: str, payload: MessageIn, db: Session = Depend
         if finish.rowcount != 1:
             raise HTTPException(409, "消息处理已过期，请重试")
         result = {"text": answer, "plan": None}
+        receipts = db.scalars(select(AssistantToolOperation).where(AssistantToolOperation.turn_id == turn.id)).all()
+        if receipts:
+            result['operations'] = [{'name': r.name, **operation_result(db, r)} for r in receipts]
+        executed = next((v for v in result.get('operations', []) if v.get('plan')), None)
+        if executed:
+            result['plan'] = {**executed['plan'], 'execution': executed['execution']}
+        if tools:
+            result["tools"] = tools
         if report is not None:
             if "incidents.read" not in user.permissions:
                 raise HTTPException(403, "异常读取权限已变化")
@@ -185,6 +262,7 @@ async def send_message(session_id: str, payload: MessageIn, db: Session = Depend
                             details={'plan_id': plan.id, 'version': plan.version})
         return turn_view(turn, user)
     finally:
+        current_turn.reset(scope_token)
         db.rollback()
         db.execute(update(AssistantSession).where(
             AssistantSession.id == session_id, AssistantSession.turn_key == token
@@ -340,7 +418,11 @@ async def execution_action(execution_id: str, payload: ExecutionActionIn, db: Se
         raise HTTPException(409, "计划已结束")
     step_permission(user, steps[execution.step_index]["action"])
     expected = {"loaded": "waiting_load", "handover": "waiting_handover", "continue_plan": "found"}
-    if payload.action == "resume" and execution.state == "paused":
+    if payload.action == 'pause' and execution.state == 'running':
+        if execution.run_kind == 'relative':
+            raise HTTPException(409, '短距动作不可暂停或恢复，请停车或取消')
+        row = transition(db, execution, payload.version, 'action_pending', pending_action='pause', message=None)
+    elif payload.action == "resume" and execution.state == "paused":
         phase = execution.vehicle_state
         if not execution.run_id:
             row = transition(db, execution, payload.version, "queued", message=None)
@@ -411,3 +493,9 @@ def set_settings(payload: ConfigurationIn, db: Session = Depends(get_db),
     record_audit(db, user, "assistant.settings", "assistant", after={"enabled": payload.enabled})
     db.commit()
     return settings(db, user)
+
+
+@router.get('/system-health')
+async def system_health(db: Session = Depends(get_db), user: User = Depends(require_permission('diagnostics.read'))):
+    from ...services.system_health import health_snapshot
+    return await health_snapshot(db, user)

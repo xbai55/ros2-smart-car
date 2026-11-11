@@ -32,7 +32,9 @@ async def lifespan(app: FastAPI):
     get_realtime_store()
     get_storage()
     from .services.safety_ingest import run_safety_ingest
-    workers = [asyncio.create_task(run_safety_ingest()),
+    from .services.system_health import run_health_monitor
+    workers = [asyncio.create_task(run_health_monitor()),
+               asyncio.create_task(run_safety_ingest()),
                asyncio.create_task(control_lease_manager.run()),
                asyncio.create_task(run_task_reconciler()),
                asyncio.create_task(AssistantWorker().run()),

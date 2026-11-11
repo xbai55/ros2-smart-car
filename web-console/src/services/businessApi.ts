@@ -82,16 +82,26 @@ async function refreshSession() {
 }
 async function request(path: string, options: RequestInit = {}, prefix = "/api/v1"): Promise<Response> {
   if (!session) throw new Error("请先登录系统账户");
+  const owner = session.user.id;
   const send = () => fetch(`${prefix}${path}`, { ...options, headers: { ...options.headers, Authorization: `Bearer ${session?.access_token || ""}` } });
   let response: Response;
   try {
     response = await send();
-    if (response.status === 401 && session) { await refreshSession(); response = await send(); }
+    if (response.status === 401 && session?.user.id === owner) {
+      options.signal?.throwIfAborted();
+      await refreshSession();
+      options.signal?.throwIfAborted();
+      if (session?.user.id !== owner) throw new Error("登录账户已切换");
+      response = await send();
+    }
   } catch (error) {
     if (error instanceof TypeError) throw new Error("无法连接业务服务，请检查后端是否已启动");
     throw error;
   }
-  if (!response.ok) { if (response.status === 401) clearBusinessSession(); throw await responseError(response); }
+  if (!response.ok) {
+    if (response.status === 401 && session?.user.id === owner) clearBusinessSession();
+    throw await responseError(response);
+  }
   return response;
 }
 export function diagnosticRequest<T>(path: string, signal?: AbortSignal) {
@@ -122,8 +132,35 @@ export type AssistantExecution = {
   vehicle_state?: string | null; message?: string | null;
 };
 export type AssistantEvent = {kind: string; payload: Record<string, unknown>};
+export type AssistantSession = {id: string; created_at: string; title?: string | null};
+export type RobotContext = {
+  robot_id: string; name?: string | null; available: boolean; reason?: string;
+  telemetry: null | {
+    mode?: string; emergency_stop?: boolean; navigation?: { message?: string };
+    search?: { run_id?: string; state?: string };
+    navigation_task?: { run_id?: string; task_id?: string; kind?: string; state?: string };
+  };
+};
+export type SystemIssue = {code: string; message: string; impact: string; suggestion: string; status?: string};
+export type SystemHealth = {observed_at: string; vehicle_available: boolean; issues: SystemIssue[];
+  history: (SystemIssue & {id: string; state: string; first_seen: string; last_seen: string})[]};
+export type AssistantOperation = {name: string; state: string; message?: string; error?: string; execution?: AssistantExecution};
+export type AssistantToolResult =
+  | {kind: 'system'; title: string; data: unknown}
+  | {kind: "robot"; available: boolean; mode?: string | null; emergency_stop?: boolean | null; received_at?: string | null}
+  | {kind: "incidents"; total: number; items: {id: string; title: string; status_label: string}[]};
+export type AssistantTool = {
+  id: number; name: string; state: "running" | "completed" | "failed" | "unavailable"; result?: AssistantToolResult;
+};
+export type AssistantChatEvent =
+  | {kind: "generating"}
+  | {kind: "delta"; text: string}
+  | ({kind: "tool"} & AssistantTool)
+  | {kind: "done"; turn: AssistantTurn}
+  | {kind: "error"; message: string; status: number};
 export type AssistantTurn = {
-  id: string; client_id: string; text: string; reply: { text: string; plan: AssistantDraft | null; report_id?: string } | null;
+  id: string; client_id: string; text: string;
+  reply: { text: string; plan: AssistantDraft | null; report_id?: string; tools?: AssistantTool[]; operations?: AssistantOperation[] } | null;
 };
 export type IncidentReport = {
   id: string; start: string; end: string; total: number; missing_occurrence_time: number; truncated: boolean;
@@ -137,6 +174,15 @@ const assistantMessagesPath = (id: string) => `/assistant/sessions/${encodeURICo
 
 export async function readAssistantEvents(after: number, receive: (id: number, event: AssistantEvent) => void | Promise<void>, signal: AbortSignal) {
   const response = await request(`/assistant/events?after=${after}`, {signal});
+  for await (const {id, data} of assistantFrames(response, signal)) {
+    if (Number.isSafeInteger(id) && id > after) {
+      await receive(id, JSON.parse(data) as AssistantEvent);
+      after = id;
+    }
+  }
+}
+
+async function* assistantFrames(response: Response, signal: AbortSignal) {
   if (!response.body) throw new Error("无法连接助手事件流");
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -152,10 +198,8 @@ export async function readAssistantEvents(after: number, receive: (id: number, e
         buffer = buffer.slice(end + 2);
         const id = Number(lines.find(line => line.startsWith("id: "))?.slice(4));
         const data = lines.find(line => line.startsWith("data: "))?.slice(6);
-        if (Number.isSafeInteger(id) && id > after && data) {
-          await receive(id, JSON.parse(data) as AssistantEvent);
-          after = id;
-        }
+        if (signal.aborted) return;
+        if (data) yield {id, data};
       }
     }
   } finally {
@@ -164,7 +208,26 @@ export async function readAssistantEvents(after: number, receive: (id: number, e
   }
 }
 
+export async function streamAssistantMessage(id: string, client_id: string, text: string,
+  receive: (event: AssistantChatEvent) => void, signal: AbortSignal): Promise<AssistantTurn> {
+  const response = await request(`${assistantMessagesPath(id)}/stream`, {
+    ...jsonOptions("POST", {client_id, text}), signal,
+  });
+  for await (const {data} of assistantFrames(response, signal)) {
+    const event = JSON.parse(data) as AssistantChatEvent;
+    if (event.kind === "error") throw Object.assign(new Error(event.message), {status: event.status});
+    if (event.kind === "done") {
+      if (event.turn?.client_id !== client_id || !event.turn.reply) throw new Error("收到不匹配的回复");
+      return event.turn;
+    }
+    receive(event);
+  }
+  signal.throwIfAborted();
+  throw new Error("回复连接中断，可重试原消息");
+}
+
 export const businessApi = {
+  assistantHealth: (signal?: AbortSignal) => json<SystemHealth>('/assistant/system-health', {signal}),
   assistantReport: (id: string) => json<IncidentReport>(`/assistant/reports/${encodeURIComponent(id)}`),
   assistantReportMarkdown: async (id: string) => (await request(
     `/assistant/reports/${encodeURIComponent(id)}?format=markdown`)).blob(),
@@ -184,8 +247,8 @@ export const businessApi = {
   assistantSettings: () => json<{enabled: boolean; configured: boolean}>("/assistant/settings"),
   setAssistantEnabled: (enabled: boolean) => json<{enabled: boolean; configured: boolean}>(
     "/assistant/settings", jsonOptions("PUT", {enabled})),
-  assistantSessions: (signal?: AbortSignal) => json<{items: {id: string; created_at: string}[]}>("/assistant/sessions", {signal}),
-  createAssistantSession: () => json<{id: string}>("/assistant/sessions", {method: "POST"}),
+  assistantSessions: (signal?: AbortSignal) => json<{items: AssistantSession[]}>("/assistant/sessions", {signal}),
+  createAssistantSession: (signal?: AbortSignal) => json<{id: string}>("/assistant/sessions", {method: "POST", signal}),
   assistantMessages: (id: string, signal?: AbortSignal) => json<{items: AssistantTurn[]}>(assistantMessagesPath(id), {signal}),
   sendAssistantMessage: (id: string, client_id: string, text: string) => json<AssistantTurn>(assistantMessagesPath(id), {
     ...jsonOptions("POST", {client_id, text}), signal: AbortSignal.timeout(35000),
@@ -193,13 +256,8 @@ export const businessApi = {
   stopBoundRobot: () => json<{
     request_sent: boolean; controller_confirmed: boolean; stationary_confirmed: boolean; errors: string[];
   }>("/robots/stop", { method: "POST", signal: AbortSignal.timeout(6000) }),
-  getRobotContext: (id: string, signal?: AbortSignal) => json<{
-    available: boolean; reason?: string; telemetry: null | {
-      mode?: string; emergency_stop?: boolean; navigation?: { message?: string };
-      search?: { run_id?: string; state?: string };
-      navigation_task?: { run_id?: string; task_id?: string; kind?: string; state?: string };
-    };
-  }>(`/robots/${encodeURIComponent(id)}/context`, { signal }),
+  getRobotContext: (id: string, signal?: AbortSignal) => json<RobotContext>(`/robots/${encodeURIComponent(id)}/context`, { signal }),
+  getBoundRobotContext: (signal?: AbortSignal) => json<RobotContext>("/robots/bound-context", {signal}),
   async login(username: string, password: string) {
     let response: Response;
     try { response = await fetch("/api/v1/auth/login", jsonOptions("POST", { username, password })); }

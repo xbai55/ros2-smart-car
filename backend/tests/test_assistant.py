@@ -47,13 +47,63 @@ def test_assistant_sessions_and_tool_boundary(client, login, monkeypatch):
         message = {"client_id": str(uuid4()), "text": "现在在哪里？"}
         first = client.post(path, headers=operator, json=message)
         assert first.status_code == 200, first.text
-        assert first.json()["reply"] == {"text": "当前无法确认车辆位置。", "plan": None}
+        assert first.json()["reply"] == {"text": "当前无法确认车辆位置。", "plan": None,
+                                         "tools": [{"id": 0, "name": "unknown", "state": "failed"}]}
         assert client.post(path, headers=operator, json=message).json() == first.json()
         assert client.post(path, headers=operator, json={**message, "text": "另一条消息"}).status_code == 409
         assert client.get(path, headers=operator).json()["items"] == [first.json()]
         assert model.calls == 2
     finally:
         assert client.put(root + "/settings", headers=admin, json={"enabled": False}).status_code == 200
+
+
+def test_message_stream_persists_tool_results_and_deduplicates_retry(client, login, monkeypatch):
+    class Model:
+        calls = 0
+
+        async def complete_stream(self, messages, tools, emit):
+            self.calls += 1
+            if messages[-1]["role"] == "user":
+                return {"tool_calls": [
+                    {"id": "query", "function": {"name": "query_incidents", "arguments": '{"unexpected":true}'}},
+                    {"id": "robot", "function": {"name": "get_robot_context", "arguments": "{}"}},
+                ]}
+            assert "error" in json.loads(messages[-2]["content"])
+            assert json.loads(messages[-1]["content"])["available"] is False
+            emit("状态")
+            emit("待核实")
+            return {"content": "状态待核实"}
+
+    model = Model()
+    monkeypatch.setattr(assistant, "configured_provider", lambda: model)
+    monkeypatch.setattr(assistant_tools, "vehicle_binding", lambda db: ("unbound-test-robot", ""))
+    admin, operator, auditor = [headers(login, name) for name in ("admin", "operator", "auditor")]
+    root = "/api/v1/assistant"
+    assert client.put(root + "/settings", headers=admin, json={"enabled": True}).status_code == 200
+    try:
+        session = client.post(root + "/sessions", headers=operator).json()["id"]
+        path = f"{root}/sessions/{session}/messages"
+        message = {"client_id": str(uuid4()), "text": "测试流式回复"}
+        assert client.post(path + "/stream", headers=auditor, json=message).status_code == 403
+        response = client.post(path + "/stream", headers=operator, json=message)
+        assert response.headers["content-type"].startswith("text/event-stream")
+        events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+        assert [event["kind"] for event in events] == [
+            "generating", "tool", "tool", "tool", "tool", "generating", "delta", "delta", "done"]
+        assert [event["state"] for event in events if event["kind"] == "tool"] == [
+            "running", "failed", "running", "unavailable"]
+        assert events[-1]["turn"]["reply"]["tools"] == [
+            {"id": 0, "name": "query_incidents", "state": "failed"},
+            {"id": 1, "name": "get_robot_context", "state": "unavailable",
+             "result": {"kind": "robot", "available": False}},
+        ]
+        assert client.get(path, headers=operator).json()["items"] == [events[-1]["turn"]]
+        assert client.get(root + "/sessions", headers=operator).json()["items"][0]["title"] == message["text"]
+        replay = client.post(path + "/stream", headers=operator, json=message)
+        assert json.loads(replay.text[6:]) == events[-1]
+        assert model.calls == 2
+    finally:
+        client.put(root + "/settings", headers=admin, json={"enabled": False})
 
 
 def test_draft_requires_real_resource_and_carries_its_version(client, login, monkeypatch):

@@ -30,3 +30,5 @@ __all__ = [
     "MissionTask",
     "AppSetting",
 ]
+
+from .assistant import AssistantToolOperation, SystemProblem, AssistantToolLock

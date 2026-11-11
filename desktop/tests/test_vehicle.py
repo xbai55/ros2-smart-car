@@ -105,7 +105,10 @@ def test_real_ssh_start_and_existing_task_preserved(tmp_path, ssh_car):
     assert remote.start('127.0.0.1', 8080)['mode'] == 'stop'
     assert state['started'] == 1
     assert 'unit=smart-car-v4.service' in state['script']
-    assert 'pkill' not in state['script']
+    assert state['script'].index('CAR_ALREADY_RUNNING') < state['script'].index('pkill')
+    assert "vendor='^python3 /home/jetson/Rosmaster/rosmaster/rosmaster_main[.]py$'" in state['script']
+    assert all(line.strip() in {'pkill -INT -f "$vendor" || true', 'pkill -TERM -f "$vendor" || true'}
+               for line in state['script'].splitlines() if line.strip().startswith('pkill '))
     assert 'systemctl --user stop' not in state['script']
     assert 'systemctl --user start' in state['script']
     assert 'enable --now' not in state['script']
