@@ -272,3 +272,30 @@ def test_status_and_map_api_expose_session_without_dropping_legacy_fields(fake_n
     snapshot = client.get("/api/map").json()
     assert snapshot["session_id"] == status["mapping"]["session_id"]
     assert snapshot["revision"] == 1 and "info" in snapshot and "data" in snapshot
+
+
+def test_slow_slam_start_does_not_block_ros_callbacks(monkeypatch):
+    import threading
+    control, store = manager(monkeypatch)
+    entered, release = threading.Event(), threading.Event()
+    def slow_start():
+        entered.set()
+        assert release.wait(5)
+        return Process()
+    monkeypatch.setattr(control, '_start_slam', slow_start)
+    thread = threading.Thread(target=control.restart)
+    thread.start()
+    try:
+        assert entered.wait(2)
+        started = time.monotonic()
+        assert control.snapshot()['state'] == 'starting'
+        assert control.observe_status(healthy_status()) is False
+        assert control.on_map(grid(100)) is False
+        assert time.monotonic()-started < .5
+    finally:
+        release.set()
+        thread.join(3)
+    assert not thread.is_alive()
+    assert control.on_map(grid(101))
+    control.observe_status(healthy_status())
+    assert control.snapshot()['state'] == 'ready'

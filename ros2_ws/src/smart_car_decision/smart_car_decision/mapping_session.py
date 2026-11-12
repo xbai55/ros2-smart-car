@@ -220,29 +220,43 @@ class MappingRestartManager:
             self._state = {"session_id": session, "state": "idle", "started_at": None, "error": None}
 
     def observe_status(self, snapshot):
-        with self._lock:
+        if not self._lock.acquire(blocking=False):
+            return False
+        try:
             self._status = copy.deepcopy(_object(snapshot))
             if self.recorder:
                 self.recorder.append_status(self._status)
             self._status_received_at = time.monotonic()
             self._refresh_state()
+        finally:
+            self._lock.release()
+
 
     def on_map(self, msg):
-        with self._lock:
+        if not self._lock.acquire(blocking=False):
+            return False
+        try:
             if self._frozen or self._state["state"] == "starting":
                 return False
             accepted = self._map_snapshot.update(msg)
             self._refresh_state()
             return accepted
+        finally:
+            self._lock.release()
+
 
     def snapshot(self):
-        with self._lock:
+        if not self._lock.acquire(blocking=False):
+            return {**dict(self._state), 'status_refresh_pending': True}
+        try:
             self._refresh_state()
             result = dict(self._state)
             result["configured_max_laser_range"] = self.settings.snapshot()["max_laser_range"]
             if self.recorder:
                 result["recording"] = self.recorder.snapshot()
             return result
+        finally:
+            self._lock.release()
 
     def _missing_inputs(self):
         missing = []

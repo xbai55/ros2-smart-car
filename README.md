@@ -1,550 +1,236 @@
-> **当前 Windows 试用版：0.3.4（2026-10-21）**
-> 安装包与版本说明见 [releases/v0.3.4](releases/v0.3.4/README.md)，桌面版使用与构建说明见 [desktop/README.md](desktop/README.md)。
-> 默认使用 SLAM 直接导航；本轮已修复导航启动、退出建图和停车定位就绪判定。实际行驶精度仍待现场验收。
+# InsightRover 智巡系统
 
-# ROS2 智能小车感知与控制系统
+基于 ROS 2 的移动机器人感知、控制与巡检管理平台。
 
-日常操作请先看 [简明启动说明：SSH、车端、本地服务与 Wi-Fi 切换](../README.md)。
+InsightRover 面向 Yahboom ROSMASTER X3 麦克纳姆轮底盘和 Jetson 计算平台，将 ROS 2 车端、FastAPI 业务后端、React 控制台及 Windows 桌面入口集成到同一套工程中，支持遥控、视觉感知、地图管理、任务管理和自然语言助手。
 
-2026-10-13 更新：React 新界面已配套部署，完成上传平面图四点标定与 SLAM 分层显示、视频连接复用，以及真实静止感知和架空控制输出检查。完整移动建图、实际标定精度与导航尚未验收。当前进度见 [本轮总结](../当前进度与下一步方案_2026-10-13.md)。下面 Flutter 重构部分仍保留旧说明，当前 React 启动方式以简明启动说明为准。
+当前源码以 V4 开发线为基础，Windows 桌面组件版本为 **4.0.2**。前端、业务 API 与桌面组件分别维护版本字段；仓库版本不表示全部硬件能力已通过现场验收。
 
-本项目面向 Yahboom ROSMASTER X3 四轮麦克纳姆智能小车，基于 ROS2 Humble 构建感知、决策、安全控制与 Web 运维控制台。当前代码已经在 Jetson 实车上部署，完成了底盘接入、激光雷达安全控制、YOLO11 视觉识别、HSV 颜色追踪、人物目标跟随、网页遥控和实时状态展示等功能。
+## 目录
 
-本文档记录的是当前仓库与实车已经具备的能力，同时明确列出测试证据、能力边界和未完成工作，可作为后续项目报告中“系统设计”“功能实现”“测试分析”和“总结展望”等章节的事实依据。
+- [系统功能](#系统功能)
+- [系统架构](#系统架构)
+- [工程结构](#工程结构)
+- [环境要求](#环境要求)
+- [本地开发](#本地开发)
+- [车端部署](#车端部署)
+- [模型与数据](#模型与数据)
+- [验证与运行边界](#验证与运行边界)
+- [开发检查](#开发检查)
+- [技术文档](#技术文档)
+- [第三方组件与许可](#第三方组件与许可)
 
-## 0. 企业级控制台重构（Flutter + FastAPI）
+## 系统功能
 
-在保留上述 ROS2 车端安全链的基础上，仓库新增独立的管理平台：
+| 模块 | 主要内容 |
+| --- | --- |
+| 车辆控制 | 手动遥控、模式切换、速度设置、急停、命令超时停车及控制租约 |
+| 雷达与避障 | 激光点云、障碍距离、雷达健康状态、主动避障设置及运行状态 |
+| 视觉感知 | 共享视频流、YOLOE 开放词汇目标搜索、YOLO11 人物检测与 ByteTrack 跟踪、HSV 颜色追踪 |
+| 安全事件 | 烟火与人员倒地专项模型接入、持续确认、事件图片留存、后台入库与通知 |
+| 地图管理 | SLAM 会话、栅格地图保存与加载、地点管理、上传平面图及四点标定 |
+| 任务管理 | 导航、巡检、运输和目标搜索的任务记录、状态同步与执行接口 |
+| Agent 助手 | 流式对话、持久会话、结构化计划、受限工具调用、任务执行、系统诊断与报告 |
+| 运维管理 | 登录认证、角色权限、审计、健康状态、跨端诊断日志及能力验收登记 |
+| Windows 桌面入口 | 本机服务管理、SSH 连接、车端启动、Wi-Fi 切换及独立用户数据目录 |
 
-- `flutter_app/`：Flutter Web 控制台，Riverpod + Freezed + go_router。页面包括登录、总览、机器人、巡检、运输任务、事件、分析、设置与企业级功能（用户、角色权限、通知、审计、地图/路线、个人中心）。
-- `backend/`：FastAPI + SQLAlchemy，提供 JWT/Refresh Token 与 RBAC。默认 SQLite 便于本地验证，实时层保留 Redis 抽象。
-- `robot-gateway/`：Flutter/FastAPI 与 ROS2 之间的唯一控制边界。**禁止直接发布 `/cmd_vel`**，只发布 `/robot/mode/set`、`/manual_cmd`、`/robot/emergency_stop/set`、`/robot/speed_scale` 与任务指令。
-- `docs/refactor/`：前端审查、分阶段实施报告与视觉截图。
+以上为工程实现范围。任务是否允许执行，由当前车辆状态、权限、车端协议和对应能力验收共同决定。
 
-本地启动（后端默认 `http://127.0.0.1:8000`，前端构建产物默认 `http://127.0.0.1:8888`）：
-
-```bash
-cd backend
-python -m app.seed
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-
-cd ../flutter_app
-flutter pub get
-flutter run -d chrome
-```
-
-登录账号由 `backend/app/seed.py` 初始化：`admin/admin123`、`operator/operator123`、`auditor/auditor123`。
-
-## 1. 当前完成情况
-
-| 模块 | 当前状态 | 说明 |
-| --- | --- | --- |
-| ROS2 底盘接入 | 已实现并实车运行 | 启动 Yahboom `Mcnamu_driver_X3`，接收 `/cmd_vel` 控制底盘 |
-| 模式管理与急停 | 已实现并测试 | 支持 7 种模式；急停拥有最高控制优先级 |
-| 网页手动遥控 | 已实现并测试 | 浏览器发送方向命令，`manual` 和 `mapping` 模式允许移动命令 |
-| 激光雷达显示与安全停车 | 已实现并实车测试 | 显示 `/scan` 点云和前方距离，支持近障停车、减速、雷达超时停车和健康状态 |
-| 全局主动避障 | 软件与闭环模拟已实现，实车未验收 | 默认开启，支持各运动模式共享开关、雷达选边绕行、恢复方向及防撞；导航由 Nav2 绕行，详见 [主动避障](docs/active-avoidance.md) |
-| YOLO11 通用目标识别 | 已实现并实车运行 | 默认使用 `yolo11s.pt`，发布识别结果和标注视频帧 |
-| 交通灯状态微调模型 | 已完成训练资产，待默认接入与实车验证 | 已加入 `traffic_light_yolo11s.pt` 和训练说明，当前作为下一轮低速上车验证基础 |
-| 人物目标跟随 | 已实现，完成感知链路测试 | 只选择 `person`，支持目标锁定、短时丢失保持和偏移控制；尚未完成空旷场地连续轨迹测试 |
-| HSV 颜色追踪 | 已实现并实车运行 | 支持红、绿、蓝、黄预设和自定义 HSV 范围 |
-| 颜色配置保存 | 已实现并测试 | 保存在浏览器本地，刷新后重新下发到 ROS；不是 Jetson 端永久配置文件 |
-| Web 状态与视频 | 已实现并测试 | 提供 REST、WebSocket、MJPEG/标注帧转发和雷达可视化 |
-| Docker 工程文件 | 已提供 | 已有 Dockerfile 和运行脚本，但未完成当前版本的完整实车容器验收 |
-| SLAM 与地图资产 | 已完成 Jetson 静止初始化及地图保存 | 已有 slam_toolbox 链路及上传图标定展示；完整移动建图、回环和实际标定精度待验收 |
-| Nav2 导航 | 代码链路已提供，实车导航未验收 | 已有启动配置与导航接口；真实定位、目标执行、避障和到点精度待现场验证 |
-| 机械臂抓取 | 未完成 | 不在当前软件闭环中 |
-
-## 2. 项目边界与自研部分
-
-Yahboom 官方工作空间提供底盘串口驱动、激光雷达驱动和部分 SLAM、导航、相机示例。本项目在这些底层驱动之上开发 ROS2 决策控制包和 Web 控制系统，不将厂商驱动描述为完全自研。
-
-当前主要自研内容包括：
-
-- 多模式管理、急停、命令超时和速度比例控制；
-- 雷达前方扇区计算、点云简化、坐标旋转和安全优先级控制；
-- YOLO11 推理节点、交通灯颜色辅助判定、安全命令保持和交通灯状态模型训练资产；
-- 只跟随人物的目标选择与跨帧锁定逻辑；
-- HSV 颜色追踪、运行时阈值配置和标注图像发布；
-- ROS2 状态汇总、FastAPI 服务和 React/Vite Web 控制台；
-- 摄像头所有权切换，避免网页、YOLO 和颜色追踪同时抢占 `/dev/video0`；
-- Jetson 原生构建、启动和部署脚本，以及配套自动化测试。
-
-## 3. 系统总体架构
+## 系统架构
 
 ```mermaid
-flowchart LR
-    WEB[Web 控制台] -->|REST / WebSocket| WN[web_app_node]
-    TCP[PC TCP 遥控] --> TB[tcp_command_bridge]
-    WN --> MM[mode_manager]
-    WN --> MC[/manual_cmd/]
-    TB --> MC
-
-    CAM[USB 相机] --> YOLO[yolo11_camera_node]
-    CAM --> COLOR[color_tracker_node]
-    YOLO --> DET[/vision/detection/]
-    YOLO --> OBJ[/vision/object_offset/]
-    YOLO --> FRAME[/vision/annotated_frame/]
-    COLOR --> CT[/vision/color_target/]
-    COLOR --> LANE[/lane/offset/]
-    OBJ --> OF[object_follow_node]
-    OF --> LANE
-
-    LIDAR[激光雷达] --> SCAN[/scan/]
-    SCAN --> DC[decision_controller]
-    SCAN --> SS[system_status_node]
-    DET --> DC
-    LANE --> DC
-    MC --> DC
-    MM --> DC
-    DC --> CMD[/cmd_vel/]
-    CMD --> BASE[Yahboom 底盘驱动]
-
-    DET --> SS
-    CT --> SS
-    LANE --> SS
-    SS --> STATUS[/robot/status/]
-    STATUS --> WN
-    FRAME --> WN
+flowchart TB
+    UI[React 控制台] -->|REST / WebSocket| API[FastAPI 业务后端]
+    DESKTOP[Windows 桌面入口] --> API
+    API --> DB[(业务数据库与媒体存储)]
+    API --> AGENT[Agent 工具与持久任务执行器]
+    AGENT --> GATEWAY[车辆网关]
+    API --> GATEWAY
+    GATEWAY -->|机器鉴权 / 控制租约| VEHICLE[ROS 2 车端 Web 服务]
+    VEHICLE --> INTENT[模式 / 手动 / 导航与搜索意图]
+    INTENT --> CONTROL[decision_controller 安全仲裁]
+    LIDAR[激光雷达] --> CONTROL
+    CAMERA[相机] --> VISION[共享视觉服务与专项模型]
+    VISION --> VEHICLE
+    CONTROL -->|/cmd_vel| DRIVER[Yahboom 底盘驱动]
+    DRIVER --> STATUS[里程计 / TF / 运行状态]
+    STATUS --> VEHICLE
 ```
 
-系统的核心控制原则是“安全信号优先于运动意图”。即使视觉节点持续给出人物偏移，只要急停被触发、前方距离小于停车阈值、雷达数据超时或人物偏移失效，`decision_controller` 都会输出零速度。
+主机与 Agent 通过受控接口表达操作意图，车辆网关不直接发布 `/cmd_vel`。车端控制器统一处理模式、急停、传感器时效、控制权和速度约束。模型不能通过自由文本执行任意 Shell、HTTP 请求或 ROS 话题发布。
 
-## 4. 软件与硬件环境
-
-### 4.1 已验证硬件
-
-- Yahboom ROSMASTER X3 麦克纳姆轮底盘；
-- Jetson 计算平台，远程主机名为 `yahboom`；
-- SLLidar 激光雷达，实车可发布 `/scan`；
-- Orbbec USB 相机，视频设备为 `/dev/video0` 和 `/dev/video1`；
-- CP210x 与 CH340 USB 串口设备，分别用于雷达和底盘通信。
-
-### 4.2 软件栈
-
-- Ubuntu + ROS2 Humble；
-- Python 3、`rclpy`、OpenCV、Ultralytics YOLO；
-- FastAPI、Uvicorn；
-- React 19、TypeScript、Vite；
-- `pytest` 与 Node.js 内置测试框架；
-- Yahboom 官方 ROS2 驱动工作空间。
-
-## 5. 目录结构
+## 工程结构
 
 ```text
 ros2-smart-car/
-├─ ros2_ws/src/smart_car_decision/    # 自研 ROS2 功能包
-│  ├─ config/decision.yaml            # 控制、感知和 Web 参数
-│  ├─ launch/bringup_all.launch.py    # 底盘、雷达与自研节点统一启动
-│  ├─ models/yolo11s.pt               # 当前默认 YOLO11 通用模型权重
-│  ├─ models/traffic_light_yolo11s.pt # 交通灯状态微调模型权重
-│  ├─ smart_car_decision/             # Python ROS2 节点和纯逻辑模块
-│  └─ web/static/                     # 兼容静态 Web 页面
-├─ web-console/                       # React/Vite Web 控制台及生产构建
-├─ training/traffic_light/            # 交通灯数据处理、训练指标和部署说明
-├─ tests/                             # Python 自动化测试
-├─ scripts/                           # Jetson、Docker 构建与运行脚本
-├─ ros2_command/                      # 旧版 PC TCP 遥控工具
-├─ Dockerfile                         # ROS2 容器环境
-└─ README.md
+├── backend/                 # FastAPI、数据库、认证、任务执行与 Agent
+├── web-console/             # React / TypeScript / Vite 控制台
+├── desktop/                 # Windows 启动入口、代理和打包工具
+├── ros2_ws/src/
+│   └── smart_car_decision/  # ROS 2 节点、控制逻辑、配置及模型资源
+├── robot-gateway/           # 网关说明
+├── scripts/                 # 构建、部署、诊断与验证工具
+├── tests/                   # 车端逻辑和接口的离线测试
+├── evaluation/              # 助手评估样例
+├── training/                # 专项模型训练资料
+├── maps/                    # 地图资源说明
+├── docs/                    # 架构、接口、部署和验证文档
+├── doc/                     # 感知与安全巡检等专题说明
+├── releases/                # 已纳入版本管理的历史交付资料
+└── src/                     # STM32 等底层工程资料
 ```
 
-## 6. ROS2 节点与职责
+当前控制台入口为 `web-console/`。子目录中的早期 README 和交付记录可能对应历史版本，使用时应核对其版本与日期。
 
-统一启动文件会启动 2 个厂商进程和 9 个自研节点。
+## 环境要求
 
-| 节点或进程 | 主要职责 | 关键输入 | 关键输出 |
-| --- | --- | --- | --- |
-| `Mcnamu_driver_X3` | Yahboom 底盘串口驱动 | `/cmd_vel` | 里程计、IMU 等厂商话题 |
-| `sllidar_node` | 激光雷达驱动 | 雷达串口 | `/scan` |
-| `mode_manager` | 模式和急停状态管理 | `/robot/mode/set`、`/robot/emergency_stop/set` | `/robot/mode`、`/robot/emergency_stop` |
-| `decision_controller` | 安全仲裁和运动决策 | 雷达、视觉、手动命令、模式 | `/cmd_vel` |
-| `laser_obstacle_monitor` | 输出辅助前方障碍布尔量 | `/scan` | `/obstacle/front` |
-| `yolo11_camera_node` | YOLO11 推理、人物偏移和标注帧 | 相机、`/robot/mode` | `/vision/detection`、`/vision/object_offset`、`/vision/annotated_frame` |
-| `color_tracker_node` | HSV 分割、颜色质心和标注帧 | 相机、颜色配置、模式 | `/vision/color_target`、`/lane/offset`、标注帧 |
-| `object_follow_node` | 将有效人物偏移接入统一控制接口 | `/vision/object_offset`、模式 | `/lane/offset` |
-| `system_status_node` | 汇总感知和运行状态 | 雷达、视觉、模式、速度 | `/robot/status` |
-| `web_app_node` | REST、WebSocket、视频与网页服务 | `/robot/status`、标注帧 | 模式、急停、速度、颜色配置和手动命令 |
-| `tcp_command_bridge` | 兼容旧 PC 遥控程序 | TCP 9999 | `/manual_cmd` |
-
-## 7. 工作模式
-
-| 模式 | 当前行为 |
+| 运行位置 | 环境与依赖 |
 | --- | --- |
-| `stop` | 始终输出零速度，适合待机和调试 |
-| `manual` | 接受网页或 TCP 手动命令；命令超过 0.7 秒未刷新则停车 |
-| `auto` | 根据 YOLO 语义结果执行停车、减速或直行，同时受雷达安全层约束 |
-| `color_track` | 根据颜色目标横向偏移低速前进和转向；目标偏移失效则停车 |
-| `object_follow` | 只跟随 `person`，根据人物中心偏移低速前进和转向 |
-| `mapping` | 接受网页或 TCP 手动命令，通过统一安全控制器发布 `/cmd_vel`；雷达或命令超时则停车 |
-| `navigation` | 当前不直接发布运动速度，尚未接入完整 Nav2 目标导航闭环 |
+| 本机业务后端 | Python 3、`backend/requirements.txt` 中的依赖；默认使用 SQLite |
+| Web 开发 | Node.js、npm；通过锁文件安装前端依赖 |
+| Windows 桌面端 | Windows 10 / 11 x64；源码构建另需 PyInstaller，安装器构建需 Inno Setup |
+| 机器人车端 | Ubuntu、ROS 2 Humble、colcon、Yahboom 底盘与雷达驱动、OpenCV 及视觉推理依赖 |
+| 视觉硬件 | USB 相机、激光雷达；GPU 推理环境须与目标 Jetson 的系统版本匹配 |
 
-## 8. 核心功能与算法
+厂商底盘与雷达驱动需单独准备。本项目的自研部分主要位于决策控制、视觉服务、业务管理、助手和诊断模块。
 
-### 8.1 安全仲裁
+## 本地开发
 
-控制优先级从高到低为：
-
-1. 急停或 `stop` 模式；
-2. 自动模式下雷达数据超时；
-3. 前方障碍停车；
-4. 前方障碍减速；
-5. 手动、YOLO、颜色或人物跟随运动意图。
-
-主要参数如下：
-
-| 参数 | 当前值 | 作用 |
-| --- | ---: | --- |
-| `obstacle_stop_distance` | 0.45 m | 前方距离不大于该值时输出零速度 |
-| `obstacle_slow_distance` | 0.75 m | 前方距离位于停车线之外但仍较近时降速 |
-| `scan_timeout_sec` | 0.6 s | 自动、颜色追踪和人物跟随模式下，雷达超时即停车 |
-| `command_timeout_sec` | 0.7 s | 手动命令超时停车 |
-| `lane_timeout_sec` | 0.5 s | 颜色或人物偏移超时停车 |
-| `cruise_speed` | 0.28 m/s | 自动模式基础巡航速度 |
-| `slow_speed` | 0.12 m/s | 跟随或近障时的基础低速 |
-| `publish_rate_hz` | 20 Hz | 决策控制输出频率 |
-
-网页还提供 `speed_scale` 速度比例。当前下限为 15%，用于防止滑块为零时产生“按钮正常但车辆完全不响应”的误判；最终速度仍然受急停和雷达强制覆盖。
-
-### 8.2 雷达前方距离与点云显示
-
-实车雷达安装方向与最初代码假设相反，车头对应激光坐标约 180°。当前系统使用：
-
-- `front_center_deg = 180°` 作为车头中心；
-- `front_angle_deg = 35°` 作为左右前方扇区范围；
-- 前方有效距离的 20% 低分位值作为安全距离，避免单个异常近点频繁触发急停；
-- 对点云坐标旋转 180°，使 Web 雷达图中的“上方”与真实车头一致；
-- 过滤 `NaN`、无穷值以及量程之外的数据，再最多抽取 96 个点用于网页显示。
-
-例如，前方扇区包含 `[0.08, 1.00, 1.10, 1.20, 1.30] m` 时，单纯取最小值会被 0.08 m 噪声影响；采用低分位统计后会得到约 1.00 m，更接近连续障碍面的真实距离。
-
-### 8.3 YOLO11 识别与自动控制
-
-YOLO 节点只在 `auto` 和 `object_follow` 模式下占用相机，其他模式会释放设备。当前默认运行模型仍为通用 `yolo11s.pt`，置信度阈值为 0.35，推理目标频率为 10 Hz。
-
-`auto` 模式中的类别规则包括：
-
-- 停车标志、遮挡严重画面：停车；
-- 行人、汽车、卡车、公交车、摩托车和自行车：减速；
-- 交通灯：在检测框内进一步使用 HSV 比例判断红灯或绿灯；
-- 未识别或无关类别：归一化为 `no_light`，不会因为偶发漏检直接反复切换到停车；
-- 安全命令保持 0.8 秒，降低检测帧抖动造成的控制跳变。
-
-仓库同时加入了第一版交通灯状态微调模型 `traffic_light_yolo11s.pt`，对应类别为 `red_light`、`yellow_light`、`green_light`、`off_light` 和 `unknown_light`。该模型基于公开道路数据训练，验证集整体指标为 `Precision 0.904 / Recall 0.789 / mAP50 0.840 / mAP50-95 0.486`，训练过程和数据说明见 `training/traffic_light/README.md`。
-
-需要注意的是，当前默认 `decision.yaml` 仍加载通用 `yolo11s.pt`，因此实车运行链路仍是“通用交通灯检测 + HSV 颜色辅助判断”。`traffic_light_yolo11s.pt` 已经具备低速上车验证基础，但还需要同步模型配置、类别到控制命令的映射、连续帧滤波和实车误检记录后，才能写成正式默认方案。可以把它理解为“模型训练这一步完成了，但车辆闭环默认开关还没有切过去”。
-
-### 8.4 只跟随人物的目标选择
-
-`object_follow` 模式不会跟随汽车、动物或其他一般物体，只处理 YOLO 的 `person` 类。
-
-目标确定过程如下：
-
-1. 没有锁定目标时，从人物检测框中优先选择置信度较高的人；置信度相同时优先选择靠近画面中心的人；
-2. 锁定后，不再每帧重新选择置信度最高的人，而是选择中心位置最接近上一帧目标的人；
-3. 新检测框与原目标中心的跳变量不得超过画面宽度的 30%；
-4. 目标短时丢失时不立即切换旁人，也不发布虚假偏移；
-5. 丢失超过 0.8 秒后解除锁定，下一次检测才重新选择人物。
-
-人物框中心相对画面中心的归一化偏移为：
-
-```text
-offset = (person_center_x - frame_center_x) / frame_half_width
-```
-
-偏移范围约为 `[-1, 1]`。负值表示人物在画面左侧，正值表示人物在右侧。控制器用比例控制计算角速度，同时以低速向前运动。雷达停车优先级始终高于人物偏移，因此人物在前方但障碍距离过近时，小车仍保持静止。
-
-当前人物跟随已经实车验证到以下链路：YOLO 独占相机、标注帧约 9.6～10.2 FPS、持续发布人物偏移、`object_follow_node` 转发偏移、控制器接收偏移并在近障条件下正确输出零速度。
-
-### 8.5 HSV 颜色追踪与配置保存
-
-颜色追踪节点对图像执行 HSV 阈值分割，通过掩膜矩计算目标面积和质心，并发布：
-
-- 是否找到目标；
-- 目标相对画面中心的横向偏移；
-- 掩膜面积；
-- 当前 HSV 上下界；
-- 带质心和状态文字的标注帧。
-
-Web 控制台提供红、绿、蓝、黄预设，也允许手动输入 HSV 范围。点击“应用配置”后，配置经 `/api/color-target` 发布到 `/vision/color_config`，颜色追踪节点无需重启即可更新阈值。
-
-颜色配置同时保存在浏览器 `localStorage` 中。页面重新打开时会先读取本地配置并重新下发到 ROS。系统还使用由颜色名称和 HSV 数值生成的稳定键判断配置是否真的变化，避免 WebSocket 每次刷新产生新对象后，把用户正在编辑的红色配置重置成绿色。
-
-需要注意：颜色配置目前是“浏览器级保存”，不是 Jetson 端配置文件永久保存。清除浏览器数据、换一台设备或在浏览器尚未连接时重启系统，后端仍会先使用 `decision.yaml` 中的默认绿色。
-
-颜色追踪相机默认请求 V4L2 + MJPG、1280 x 720、30 FPS，并将标注 JPEG 质量提高到 82。这个改动主要解决实车颜色追踪画面发糊、帧尺寸偏低的问题；同时 Web 视频使用铺满画面的方式显示，避免操作时看到明显黑边或缩小预览。
-
-### 8.6 摄像头所有权管理
-
-`/dev/video0` 不能被多个 OpenCV 进程稳定地同时打开，因此系统按模式划分相机所有权：
-
-- `stop`、`manual` 等非视觉模式：Web 节点可以直接读取相机预览；
-- `auto`、`object_follow`：YOLO 节点占用相机并发布 `/vision/annotated_frame`；
-- `color_track`：颜色追踪节点占用相机并发布同一标注帧话题；
-- Web 页面在视觉模式下不再直接抢占相机，只转发视觉节点发布的 JPEG 标注帧。
-
-这一结构解决了网页预览和 YOLO 同时打开 `/dev/video0` 导致的 `Device is busy` 问题。
-
-## 9. Web 控制台
-
-实车访问地址：
-
-```text
-http://192.168.1.104:8080
-```
-
-主要功能包括：
-
-- 模式切换、急停和解除急停；
-- 手动前后、平移和原地转向；
-- 速度比例设置；
-- YOLO/颜色标注视频显示；
-- 前方距离和雷达点云显示；
-- YOLO 结果、人物或颜色偏移、最后命令显示；
-- HSV 颜色预设、自定义阈值和本地保存；
-- 节点、相机、连接状态和原始 JSON 查看；
-- WebSocket 状态更新与断线后的 HTTP/重连处理。
-
-### 9.1 REST 接口
-
-| 方法 | 路径 | 功能 | ROS2 对应接口 |
-| --- | --- | --- | --- |
-| GET | `/health` | Web Node 存活检查（ROS2 数据情况在 `ros2` 子字段） | `/robot/status`（仅判断新鲜度） |
-| GET | `/api/status` | 获取当前系统状态 | `/robot/status`、`/odom`、`/tf`、`/scan` |
-| GET | `/api/map` | 获取 SLAM 地图快照（无地图时 404） | `/map` |
-| POST | `/api/command` | 下发控制意图（手动命令 / 模式 / 速度比例 / 急停 / 任务） | `/manual_cmd`、`/robot/mode/set`、`/robot/speed_scale`、`/robot/emergency_stop/set`、`/patrol_task/set`、`/mission_task/set` |
-| POST | `/api/mode` | 设置工作模式 | `/robot/mode/set` |
-| POST | `/api/emergency-stop` | 设置或解除急停 | `/robot/emergency_stop/set`（同时向 `/manual_cmd` 发 stop） |
-| POST | `/api/speed` | 设置速度比例 | `/robot/speed_scale` |
-| POST | `/api/patrol-task` | 下发巡检任务 | `/patrol_task/set` |
-| POST | `/api/mission-task` | 下发运输任务 | `/mission_task/set` |
-| POST | `/api/color-target` | 设置 HSV 颜色配置 | `/vision/color_config` |
-| POST | `/api/mode-obstacle-stop-distance` | 设置分模式障碍停车距离 | `/robot/mode_obstacle_stop_distances` |
-| POST | `/api/tracking-target` | 选择跟随目标 | `/vision/tracking_target/set` |
-| GET | `/api/video` | 视频服务地址与状态（不返回视频数据） | `/vision/annotated_frame` |
-| GET | `/video_feed` | 获取 MJPEG 视频流 | `/vision/annotated_frame` / USB 摄像头 |
-
-WebSocket 接口包括 `/ws/status` 和 `/ws/control`，分别用于实时状态推送和低延迟手动命令。`/ws/status` 每帧既保留旧控制台使用的扁平状态字段，也附带文档信封 `{"type": "robot_status", "timestamp": ..., "data": {...}}`。
-
-Web Node 只发布**控制意图**话题，永远不会发布 `/cmd_vel`；最终速度由 `decision_controller` 仲裁。完整契约、启动方式与测试范围见 `docs/vehicle-web-api.md`。
-
-日志与诊断中心的停车证据、运行日志、权限和导出说明见 [v4 日志与诊断](docs/v4-diagnostics.md)。
-
-## 10. 构建与运行
-
-### 10.1 Jetson 原生运行
+### 获取源码
 
 ```bash
-cd ~/ros2-smart-car
-bash scripts/build_jetson.sh
-bash scripts/run_jetson.sh
+git clone https://github.com/xbai55/ros2-smart-car.git
+cd ros2-smart-car
 ```
 
-`run_jetson.sh` 会加载 ROS2 Humble、本项目工作空间和 Yahboom 常见工作空间，然后启动底盘驱动、SLLidar 和全部自研节点。系统默认模式为 `stop`。
+### 启动业务后端
 
-### 10.2 常用检查命令
+建议使用独立 Python 虚拟环境。在仓库根目录安装依赖：
 
 ```bash
-export ROS_DOMAIN_ID=77
-ros2 node list
-ros2 topic list
-ros2 topic echo /robot/status
-ros2 topic echo /cmd_vel
-ros2 topic hz /scan
-ros2 topic hz /vision/annotated_frame
+python -m pip install -r backend/requirements.txt
+cd backend
+python -m app.seed
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-### 10.3 Jetson 建图
+初始化命令创建角色、权限、用户及基础设置。开发账户包括 `admin/admin123`、`operator/operator123` 和 `auditor/auditor123`；仅供本地开发，实际部署应修改密码和 `JWT_SECRET`。
 
-构建后先检查扫描、里程计、TF 和 SLAM 包：
+- 业务服务：`http://127.0.0.1:8000`
+- API 文档：`http://127.0.0.1:8000/docs`
 
-```bash
-bash scripts/check_mapping_prereqs.sh
-```
+### 启动 Web 控制台
 
-启动建图。默认假设厂商 URDF 已发布雷达 TF；只有确认缺失时才启用本项目静态 TF，并填写实测安装参数：
-
-```bash
-ros2 launch smart_car_decision mapping.launch.py
-
-ros2 launch smart_car_decision mapping.launch.py \
-  publish_laser_tf:=true laser_x:=0.0 laser_y:=0.0 laser_z:=0.0 \
-  laser_yaw:=3.141592653589793
-```
-
-建图模式仍由 `decision_controller` 唯一发布最终 `/cmd_vel`。使用 Web 将模式切换为 `mapping` 后低速遥控；急停、近障、雷达超时和命令超时仍会停车。
-
-录制和回放建图输入：
-
-```bash
-bash scripts/record_lidar_bag.sh bags/lab-20260621
-bash scripts/replay_lidar_bag.sh bags/lab-20260621
-```
-
-保存、检查和重新加载地图：
-
-```bash
-ros2 run smart_car_decision map_asset save lab-20260621 \
-  --site engineering-lab --bag-path bags/lab-20260621
-ros2 run smart_car_decision map_asset inspect maps/lab-20260621/map.yaml
-ros2 launch smart_car_decision map_view.launch.py \
-  map:=$PWD/maps/lab-20260621/map.yaml
-```
-
-### 10.4 PC 旧版遥控工具
-
-```bash
-python ros2_command/pc.py --host 192.168.1.104 --port 9999
-```
-
-支持 `forward`、`backward`、`left`、`right`、`turn_l`、`turn_r` 和 `stop`。这些命令经 `tcp_command_bridge` 转换为 `/manual_cmd`。
-
-### 10.5 Docker
-
-仓库提供 `Dockerfile`、`scripts/build_jetson.sh` 和 `scripts/run_docker.sh`。容器使用 host 网络和设备映射，以便访问 ROS2 网络、相机和串口。当前建议优先使用已经完成实车验证的 Jetson 原生运行方式。
-
-## 11. 自动化测试
-
-### 11.1 Python 测试
-
-当前测试命令：
-
-```bash
-PYTHONPATH=ros2_ws/src/smart_car_decision python -m pytest -q
-```
-
-当前分支最近一次本地运行结果为：
-
-```text
-78 passed
-```
-
-78 项测试覆盖以下方面：
-
-| 测试组 | 覆盖内容 |
-| --- | --- |
-| 颜色配置 | HSV 数值限幅、状态存储、刷新后重新下发 |
-| 控制策略 | 非法模式、停止模式、急停、手动命令超时、近障停车、识别超时、速度比例、人物偏移转向、雷达超时停车 |
-| 人物锁定 | 忽略非人物类别、初次选择、检测顺序变化时保持目标、丢失超时后重新选择 |
-| 雷达处理 | 无效距离过滤、点云投影、180° 前方扇区、跨 ±π 角度、低分位抗噪、空扇区、显示坐标旋转 |
-| 雷达健康 | 扫描频率、数据年龄、有效率、未收到、过期和恢复状态 |
-| 建图配置 | mapping 安全遥控、SLAM 参数、依赖、launch 和静态 TF 开关 |
-| 地图资产 | 地图 ID、PGM 质量统计、元数据、地图加载和生命周期管理 |
-| YOLO 决策 | 遮挡画面停车、未知类别归一化、安全命令短时保持 |
-| Web 状态 | 非法模式拒绝、非手动模式拒绝手动命令、急停状态更新 |
-| 视频流 | 标注帧新鲜度、空帧和过期帧拒绝、等待新版本、视觉模式释放网页直连相机 |
-| 相机参数 | 采集 FPS、目标输出 FPS 和视觉模式相机占用规则 |
-| 静态资源 | 优先加载 React/Vite 生产构建目录 |
-
-### 11.2 前端测试与构建
-
-前端测试命令：
-
-```bash
-node --experimental-strip-types --test --test-isolation=none web-console/tests/*.test.ts
-```
-
-最近一次结果为：
-
-```text
-33 passed
-```
-
-覆盖内容包括：
-
-- 颜色配置跨页面刷新保存；
-- 无效本地颜色数据安全回退；
-- 等价 WebSocket 颜色快照使用稳定身份键，不重置编辑中的颜色；
-- 模式和速度 REST 请求体；
-- WebSocket 地址随 HTTP/HTTPS 和主机变化；
-- 视频加载完成状态；
-- 视频加载看门狗超时状态。
-- 雷达健康状态和操作员提示。
-- `mapping` 模式复用安全手动遥控面板。
-- 地图显示降噪、位姿平滑和地图重启/保存接口。
-- UI 文案防乱码、颜色预设即时应用和视频画面填充显示。
-
-生产构建命令：
+在另一个终端中，从仓库根目录执行：
 
 ```bash
 cd web-console
+npm ci
+npm run dev
+```
+
+访问 `http://127.0.0.1:5173`。开发代理默认连接本机 `8000` 端口的业务后端；可使用 `BUSINESS_PROXY_TARGET` 调整代理目标。
+
+本地页面和业务服务可独立运行。实时遥测、视频与运动任务需要已部署且可连接的车端服务；离线业务记录不代表实际车辆已经执行任务。
+
+### 配置车辆与助手
+
+下列变量应在启动业务服务前设置：
+
+| 配置项 | 用途 |
+| --- | --- |
+| `DATABASE_URL` | 业务数据库连接；默认 `sqlite:///./smart_patrol.db` |
+| `JWT_SECRET` | 登录令牌签名密钥 |
+| `ROBOT_WEB_URL` / `ROBOT_GATEWAY_URL` | 车辆服务连接地址，具体路由见后端文档 |
+| `ROBOT_SERVICE_TOKEN` | 主机与车端共享的机器鉴权凭据 |
+| `STORAGE_LOCAL_DIR` | 本地媒体与证据文件存储目录 |
+| `ASSISTANT_BASE_URL` / `ASSISTANT_MODEL` / `ASSISTANT_API_KEY` | 助手模型服务配置 |
+| `ASSISTANT_VISION_BASE_URL` / `ASSISTANT_VISION_MODEL` / `ASSISTANT_VISION_API_KEY` | 可选的独立视觉模型服务 |
+
+助手配置示例见 [backend/assistant.env.example](backend/assistant.env.example)。示例文件用于说明配置字段，不会因复制文件而自动配置全部启动方式。独立业务服务通过运行环境提供配置，Windows 桌面版也支持原生配置入口；未配置图像能力时，不假定对话模型能够看图。
+
+数据库、地图、媒体和连接配置应单独备份。Windows 桌面版用户数据默认位于 `%LOCALAPPDATA%\InsightRover`，程序文件默认位于 `%LOCALAPPDATA%\Programs\InsightRover`。
+
+## 车端部署
+
+在已安装 ROS 2 Humble 和厂商驱动的目标设备上，可使用基础构建入口：
+
+```bash
+bash scripts/build_jetson.sh
+```
+
+V4 部署还需配置机器凭据、控制租约、共享视觉服务、模型路径、设备参数及独立服务目录。部署步骤见 [车端部署说明](docs/v4-vehicle-deployment.md)，相关工具包括 `scripts/stage_v4_vehicle.py`、`scripts/provision_v4_vehicle.py` 和 `scripts/preflight_v4_vehicle.py`。执行前应查看各脚本参数，按目标设备调整配置。
+
+`scripts/run_jetson.sh` 提供基础启动入口，默认 `ROS_DOMAIN_ID=77`。使用共享视觉服务时，按部署文档关闭独立旧相机推理进程，避免重复占用摄像头。
+
+桌面安装包负责连接兼容的车端服务，不会自动将本仓库源码部署到任意小车。更新车端后，应核对实际源码构建、设备配置和控制发布者，再进行静止检查及逐项现场验收。
+
+## 模型与数据
+
+通用视觉搜索采用 YOLOE 相关模型；人物跟随使用 YOLO11 与 ByteTrack。多数推理权重、训练数据及本地生成资源不随源码分发，应按实际配置单独准备。
+
+仓库已包含固定版本的 `yolo11-fall.pt` 倒地专项权重，其摘要、类别映射和获取方式见 [倒地模型接入说明](docs/fall-model-integration.md)。其中 `fallen` 表示倒地或躺卧姿态，单帧结果不能证明发生了跌倒动作，也不能区分主动躺下与异常倒地。烟火专项权重需要另行配置。
+
+地图、媒体证据、模型文件与数据库之间存在引用关系，备份时应一并保存对应资源。密钥、个人数据库、运行日志和机器配置不应提交到仓库。
+
+## 验证与运行边界
+
+4.0.2 部署记录确认了车端服务构建、停车状态、视觉模型运行和部分接口连通性，详见 [Agent 系统工具记录](docs/agent-system-tools.md)。这些记录对应当时的部署环境，不替代当前设备的状态检查。
+
+| 能力 | 当前验证边界 |
+| --- | --- |
+| 认证、任务、诊断与助手接口 | 已有离线回归及隔离环境验证记录 |
+| 视觉模型运行与事件链路 | 已有静止运行检查；烟火与倒地的准确率需单独现场评估 |
+| 受限短距前进 | 已实现里程计反馈、限速、超时与停车；完整能力须按对应构建验收 |
+| SLAM 建图 | 已实现会话、记录和地图接口；本次纳入回调锁竞争修复，完整移动建图仍待验证 |
+| 导航、巡检、运输与移动搜索 | 已提供任务及执行链路，需分别完成当前版本的现场验收 |
+| 长时间运行与异常恢复 | 需继续验证磁盘空间、日志写入、传感器时效和失联工况 |
+
+软件测试通过、部署成功和实车验收是不同结论。能力放行按车辆、构建、地图及视觉模型指纹核验；相关资源变化后，需要重新检查验收是否仍然有效。
+
+## 开发检查
+
+在仓库根目录运行车端离线测试：
+
+```bash
+python -m pytest tests -q
+```
+
+在 `backend/` 目录运行后端与桌面测试：
+
+```bash
+python -m pytest tests ../desktop/tests -q
+```
+
+在 `web-console/` 目录运行前端测试与构建：
+
+```bash
+npm test
 npm run build
 ```
 
-TypeScript 编译和 Vite 生产构建已通过，生成的带哈希资源已部署到 Jetson。
+上述检查主要验证逻辑、接口和构建，不会完成物理车辆的导航、避障或识别效果验收。执行带有 `vehicle`、`live` 或 `deploy` 等名称的现场工具前，应确认工具行为及目标设备。
 
-## 12. 实车测试记录
+## 技术文档
 
-当前版本已经完成以下实车检查：
+| 主题 | 文档 |
+| --- | --- |
+| 业务后端与接口 | [Backend](backend/README.md) |
+| 车端 Web API | [车辆接口](docs/vehicle-web-api.md) |
+| Agent 控制与短距前进 | [任务控制](docs/v4-agent-control.md) |
+| Agent 诊断、视觉与恢复工具 | [系统工具](docs/agent-system-tools.md) |
+| 助手 API | [接口说明](docs/v4-assistant-api.md) |
+| 控制权与安全边界 | [控制租约](docs/v4-control-lease.md)、[控制边界](docs/v4-control-boundary.md) |
+| 运行诊断 | [诊断系统](docs/v4-diagnostics.md) |
+| 实车能力验收 | [验收登记](docs/v4-physical-acceptance.md) |
+| 模型集成 | [倒地专项模型](docs/fall-model-integration.md) |
+| 主动避障 | [设计与参数](docs/active-avoidance.md) |
+| 地图与建图记录 | [地图管理](docs/map-management.md)、[建图设置与记录](docs/mapping-settings-and-recordings.md) |
+| V4 历史验证 | [合并与部署记录](docs/agent-system-tools-validation-20261111.md) |
+| Windows 桌面入口 | [使用与构建](desktop/README.md) |
 
-1. SSH 登录 Jetson，确认项目目录、ROS2 包和厂商驱动可用；
-2. 确认 `/dev/ttyUSB0`、`/dev/ttyUSB1`、`/dev/video0` 和 `/dev/video1` 存在；
-3. 单独启动 SLLidar，成功获取 `/scan`，雷达健康状态为 `OK`，实际更新约 7～10 Hz；
-4. 启动状态节点后，`front_distance` 从原先的 `null` 修复为有效米制距离；
-5. 雷达点云旋转后，Web 图中的车头方向与实车一致；
-6. 调用颜色接口切换到红色，等待后续状态刷新后仍保持红色；
-7. 完整启动后确认底盘、雷达和 9 个自研节点均在线；
-8. `stop` 模式下实测 `/cmd_vel` 的线速度和角速度全部为 0；
-9. 人物跟随模式下，YOLO 独占 `/dev/video0`，标注帧约 9.6～10.2 FPS，并成功发布人物偏移；
-10. 前方距离小于 0.45 m 时，即使人物偏移持续有效，`/cmd_vel` 仍保持全零；
-11. Web 首页和 `/api/status` 返回 HTTP 200，生产资源已更新为最新哈希文件；
-12. Jetson 端重新编译成功，远端 Python 测试为 37 项通过。
+## 第三方组件与许可
 
-这些结果证明了“传感器输入—感知节点—决策节点—安全仲裁—状态展示”链路能够在实车上运行。需要强调的是，人物跟随的运动部分因为测试时前方存在近障，安全层正确阻止了车辆前进，因此尚不能把“长距离连续跟随效果”写成已完成验收。
+本项目使用 ROS 2、Yahboom 驱动、Ultralytics、FastAPI、React 等第三方组件。厂商驱动、模型权重、数据集及打包运行库遵循各自的许可和使用条件，桌面依赖声明见 [THIRD_PARTY_NOTICES.txt](desktop/THIRD_PARTY_NOTICES.txt)。
 
-## 13. 已知限制与未完成工作
-
-### 13.1 需要优先完成
-
-1. **人物连续运动跟随测试**：需要在空旷、无台阶场地测试直行、转向、目标横穿、短时遮挡、多人交叉和目标离开等工况，并记录轨迹、偏移和停车距离。
-2. **Jetson 建图验收**：需要实测 `/odom`、TF、雷达安装位姿、闭环地图和地图重新加载；当前只能确认代码、配置和自动化测试通过。
-3. **地图质量对比**：需要在实际场地完成至少两次独立建图，记录墙体连续性、重影、闭环偏差和实际尺寸误差。
-4. **颜色配置后端持久化**：当前配置保存在浏览器本地。后续可在 Jetson 保存 YAML/JSON，使所有终端和系统重启前后共享同一配置。
-5. **系统化 Web 视觉回归**：已完成前端单元测试、构建和 HTTP 检查，但还缺少多浏览器、手机尺寸、弱网、断线重连和长时间运行的完整自动化 UI 测试。
-
-### 13.2 算法能力限制
-
-- 人物锁定使用检测框中心连续性启发式算法，不是 ByteTrack、DeepSORT 或带 ReID 的多目标跟踪器；多人长时间交叉或完全遮挡后仍可能换人；
-- 默认 YOLO 运行链路仍使用通用 `yolo11s.pt`；虽然已经训练出 `traffic_light_yolo11s.pt` 并记录了 mAP、Precision、Recall 等指标，但尚未切为默认模型并完成实车闭环验收；
-- 当前默认交通灯判断仍依赖检测框内 HSV 比例，复杂光照、反光和远距离小目标下需要进一步标定；微调模型后续也需要补充本车摄像头数据；
-- 雷达距离参数根据当前安装方向和现场测试设置，更换安装方向后必须重新校准 `front_center_deg`；
-- 当前跟随控制主要是横向比例控制，没有目标距离视觉估计、速度平滑、加速度约束和轨迹预测。
-
-### 13.3 尚未形成完整闭环的项目目标
-
-- SLAM 和地图资产代码已实现，但 Jetson 建图、地图质量评估和 Web 地图图像展示尚未完成实车闭环；
-- Nav2 定位、目标点下发、全局/局部规划和动态避障闭环；
-- 深度相机点云、三维障碍距离和视觉—雷达外参标定；
-- 机械臂检测、定位、抓取和底盘协同；
-- Docker 版本在当前 Jetson 硬件上的完整传感器、GPU、网络和长期稳定性验收；
-- 自动启动服务、进程崩溃恢复、日志轮转和运行健康监控；
-- Web 登录认证、权限控制和局域网以外的安全访问；
-- GitHub Actions 等持续集成流程。
-
-## 14. 项目报告撰写建议
-
-后续项目报告可以按以下事实组织：
-
-- “总体设计”使用第 3 节架构图和第 6 节节点表；
-- “关键技术”重点展开安全仲裁、雷达低分位距离、人物跨帧锁定、HSV 在线配置和摄像头所有权管理；
-- “系统实现”按 ROS2 节点、Web 后端、前端控制台和 Jetson 部署分层描述；
-- “测试与分析”引用第 11 节自动化测试和第 12 节实车测试，不要把未完成的连续跟随、SLAM 或机械臂写成已验收；
-- “不足与展望”可直接基于第 13 节展开，并补充后续实测数据、截图、轨迹曲线和识别指标。
-
-在报告中应始终区分厂商底层驱动与本项目自研模块，避免把 Yahboom 已提供的底盘、雷达、SLAM 或导航示例全部描述为自主开发成果。
-
-## 15. ByteTrack 特定人物跟随
-
-`object_follow` 模式使用 Ultralytics 内置 ByteTrack，只跟踪 YOLO11 的 `person` 类。ByteTrack 没有独立模型权重，系统继续使用 `models/yolo11s.pt`。
-
-目标选择规则：
-
-1. 默认自动选择置信度较高且靠近画面中心的人，并锁定其 `track_id`；
-2. 在网页切换到“目标跟随”后，可以点击视频中的人物框切换为手动锁定；
-3. ByteTrack 使用高、低置信度两阶段匹配和约 0.8 秒轨迹缓冲，短时遮挡不会立即换 ID；
-4. 自动目标丢失后可以重新选择人物；手动目标丢失后停车等待，不会自动误跟旁人；
-5. 点击“自动选择”按钮可退出手动等待状态。
-
-目标选择接口为 `POST /api/tracking-target`。自动选择载荷为 `{"action":"auto"}`；点击选择载荷为 `{"action":"select","x":0.42,"y":0.55}`，其中坐标相对于原始视频画面归一化。ROS2 对应话题为 `/vision/tracking_target/set`，状态发布到 `/vision/tracking_target`。
-
-标注视频会以黄色粗框和 `LOCKED ID` 突出当前目标。ByteTrack 不提供人脸识别；人物长时间离场再返回时，需要重新点击选择。
+仓库当前未提供覆盖全部自研源码的统一开源许可证。第三方组件的许可证不构成对本项目其他代码或模型的统一授权；再分发或商业使用前应分别核对。
