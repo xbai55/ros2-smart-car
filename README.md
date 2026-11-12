@@ -38,24 +38,11 @@ InsightRover 面向 Yahboom ROSMASTER X3 麦克纳姆轮底盘和 Jetson 计算�
 
 ## 系统架构
 
-```mermaid
-flowchart TB
-    UI[React 控制台] -->|REST / WebSocket| API[FastAPI 业务后端]
-    DESKTOP[Windows 桌面入口] --> API
-    API --> DB[(业务数据库与媒体存储)]
-    API --> AGENT[Agent 工具与持久任务执行器]
-    AGENT --> GATEWAY[车辆网关]
-    API --> GATEWAY
-    GATEWAY -->|机器鉴权 / 控制租约| VEHICLE[ROS 2 车端 Web 服务]
-    VEHICLE --> INTENT[模式 / 手动 / 导航与搜索意图]
-    INTENT --> CONTROL[decision_controller 安全仲裁]
-    LIDAR[激光雷达] --> CONTROL
-    CAMERA[相机] --> VISION[共享视觉服务与专项模型]
-    VISION --> VEHICLE
-    CONTROL -->|/cmd_vel| DRIVER[Yahboom 底盘驱动]
-    DRIVER --> STATUS[里程计 / TF / 运行状态]
-    STATUS --> VEHICLE
-```
+![智巡 InsightRover 系统总体架构](docs/architecture/insightrover-system-architecture.svg)
+
+架构图采用黑白横向分区，分别表达主机业务与 Agent 编排、持久任务执行、主机通信适配、Jetson 感知导航与统一安全控制，以及机器人硬件。HTTP、状态 WebSocket、助手 SSE 和 ROS 2 内部通信按各自职责标明。
+
+图稿下载：[SVG 矢量图](docs/architecture/insightrover-system-architecture.svg) · [高清 PNG（7680 × 4320）](docs/architecture/insightrover-system-architecture.png) · [Draw.io 可编辑源文件](docs/architecture/insightrover-system-architecture.drawio) · [Mermaid 源文件](docs/patrol-assistant-architecture.mmd)。[修改说明与代码核查](docs/architecture/README.md)。
 
 主机与 Agent 通过受控接口表达操作意图，车辆网关不直接发布 `/cmd_vel`。车端控制器统一处理模式、急停、传感器时效、控制权和速度约束。模型不能通过自由文本执行任意 Shell、HTTP 请求或 ROS 话题发布。
 
@@ -215,6 +202,7 @@ npm run build
 
 | 主题 | 文档 |
 | --- | --- |
+| 系统总体架构图 | [图稿、源文件与修改说明](docs/architecture/README.md) |
 | 业务后端与接口 | [Backend](backend/README.md) |
 | 车端 Web API | [车辆接口](docs/vehicle-web-api.md) |
 | Agent 控制与短距前进 | [任务控制](docs/v4-agent-control.md) |

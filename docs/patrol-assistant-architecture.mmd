@@ -1,48 +1,106 @@
-flowchart TB
-  subgraph PC[Windows 控制台 / 业务服务]
-    UI[可拖动智巡桌宠、对话浮窗与任务卡片]
-    API[助手 API：登录、会话与权限]
-    ORCH[单助手编排：理解、查资料、生成草案]
-    TOOLS[受限 Tool Registry：地点、路线、能力、任务状态]
-    CHECK[确定性校验：真实 ID、地图版本、能力与任务冲突]
-    EVIDENCE[管理员实车证据登记：版本绑定、门槛检查与撤销]
-    CONTEXT[后台遥测快照与任务对账]
-    LEASE[单车控制租约与代际]
-    CONFIRM[用户确认：绑定计划版本与有效期]
-    EXEC[持久化任务执行器：顺序执行、幂等与取消]
-    DB[(会话 / 计划 / 执行记录 / 审计)]
-    GATE[现有业务服务与 Robot Gateway]
-    STOP[停止快捷通道：不等待模型]
-    UI --> API --> ORCH
-    ORCH <--> TOOLS
-    ORCH --> CHECK --> CONFIRM --> EXEC --> GATE
-    API <--> DB
-    EXEC <--> DB
-    EVIDENCE --> CHECK
-    EVIDENCE <--> DB
-    CONTEXT --> TOOLS
-    CONTEXT --> EXEC
-    EXEC --> LEASE --> GATE
-    UI --> STOP --> GATE
+%% Current-code overview; precise report/PPT layout is in architecture/*.drawio and *.svg.
+%% This replaces the previous assistant-centric TB diagram without changing runtime architecture.
+%%{init: {"theme":"base","themeVariables":{"primaryColor":"#ffffff","primaryTextColor":"#000000","primaryBorderColor":"#000000","lineColor":"#000000","clusterBkg":"#ffffff","clusterBorder":"#000000","fontFamily":"Microsoft YaHei, Arial, sans-serif"},"flowchart":{"curve":"linear","htmlLabels":true}}}%%
+flowchart LR
+  subgraph host["主机端：业务管理与智能编排"]
+    direction TB
+    desktop["Windows<br/>桌面入口<br/>启动本机服务"]
+    ui["React 管理控制台<br/>悬浮 Agent 助手 / 任务卡片"]
+    api["FastAPI 业务接口层<br/>身份认证 · JWT · RBAC 权限管理"]
+    agent["Agent 智能编排<br/>提供器 ↔ 外部大模型 API<br/>意图理解 · 工具注册与调用<br/>计划组织 · 业务能力调用"]
+    business["核心业务服务<br/>地图路线 · 巡检 · 文件运输<br/>异常事件 · 机器人状态<br/>普通业务任务入口"]
+  subgraph execution["持久任务执行与状态管理"]
+    direction TB
+    worker["助手计划推进<br/>AssistantWorker<br/>多步骤 / 人工交接"]
+    shared["共享业务执行<br/>导航 / 巡检 / 运输<br/>搜索 / 短距动作"]
+    reconcile["执行状态管理<br/>任务对账 / 进度<br/>结果持久记录"]
   end
-  LLM[OpenAI-compatible API / DeepSeek：必要文本上下文]
-  ORCH <--> LLM
-  TOOLS --> GATE
-  subgraph CAR[Jetson 车端]
-    HTTP[现有 Web API + 能力查询 + 执行代际校验]
-    TASK[现有导航 / 巡逻 / 搜索任务状态机]
-    NAV[Nav2：定位与路线执行]
-    VISION[YOLOE‑11s：目标识别与证据]
-    CTRL[decision_controller：停车锁与雷达防撞]
-    BASE[唯一 cmd_vel 出口 → 底盘]
-    HTTP --> TASK
-    TASK --> NAV --> CTRL
-    TASK --> VISION --> CTRL
-    HTTP --> CTRL
-    CTRL --> BASE
+    gateway["主机通信适配<br/>RobotGateway<br/>HTTP 调用<br/>任务 / 导航目标<br/>模式 / 控制意图<br/>状态 / 日志<br/>异常证据<br/><br/>状态 WS 代理<br/>vehicle_control<br/><br/>机器鉴权 / 租约"]
+    ingest["反馈同步与异常证据接收<br/>遥测快照 · 任务回执 · 诊断日志 · 事件与图片"]
+    store["数据存储<br/>业务数据库 · 会话 / 执行记录 · 媒体与异常证据"]
   end
-  GATE <--> HTTP
-  HTTP -.真实状态与结果.-> API
-  HTTP -.遥测与运行身份.-> CONTEXT
-  MCP[后续可选 MCP Adapter：复用同一工具注册与权限校验]
-  MCP -.不属于首版.-> TOOLS
+  subgraph car["Jetson 车端：ROS 2 Humble 感知、导航与控制"]
+    direction TB
+    web["ROS 2 车端 Web 服务<br/>web_app_node / Web API<br/>鉴权 · 租约请求与回执"]
+    task["车端导航任务管理<br/>NavigationTaskRunner<br/>NavigationBridge · ROS 2 Action"]
+    mode["模式管理与控制意图接入<br/>mode_manager · 手动 / 模式 / 急停<br/>控制租约请求与回执"]
+    status["状态汇总与诊断反馈"]
+  subgraph vision["视觉感知"]
+    direction TB
+    camera["共享相机服务<br/>CameraStream / 原始帧"]
+    models["通用与专项视觉模型<br/>YOLOE 通用目标检测<br/>人员倒地专项 · 烟火专项"]
+    events["异常候选与事件确认<br/>图片 / 事件落盘 · 证据回传"]
+  end
+  subgraph navigation["自主导航"]
+    direction TB
+    slam["SLAM Toolbox 建图"]
+    map["地图资产<br/>栅格保存 / 加载"]
+    amcl["AMCL 定位<br/>map → odom"]
+    nav2["Nav2 路径规划与导航控制<br/>规划器 · 控制器 · 速度平滑"]
+  end
+  subgraph control["运动控制与安全"]
+    direction TB
+    manual["手动与其他模式意图<br/>/manual_cmd 等"]
+    search["搜索控制意图<br/>VisionService → 停车锁"]
+    navspeed["自动导航速度<br/>/navigation/cmd_vel"]
+    controller["decision_controller<br/>统一控制与安全仲裁<br/>雷达安全检测 · 急停 · 超时 · 控制租约"]
+    driver["Yahboom 底盘软件驱动"]
+  end
+    inputs["ROS 2 传感与坐标信息<br/>/scan · /odom · TF<br/>雷达驱动 / 里程计 / IMU 滤波 / EKF"]
+  end
+  subgraph hardware["机器人硬件"]
+    direction TB
+    jetson["Jetson Orin Nano<br/>承载上方车端软件"]
+    camhw["相机<br/>USB 图像采集"]
+    lidarhw["激光雷达<br/>激光扫描数据"]
+    feedbackhw["底盘反馈硬件<br/>编码器 / IMU"]
+    motor["Yahboom X3 底盘<br/>四轮电机执行"]
+  end
+  desktop --> ui
+  ui <-->|"HTTP / WebSocket / SSE"| api
+  api --> agent
+  api --> business
+  agent --> business
+  agent -->|"确认计划"| worker
+  business --> shared
+  worker --> shared
+  shared -.-> reconcile
+  shared ==> gateway
+  business --> gateway
+  gateway -.-> ingest
+  ingest -.-> reconcile
+  ingest --> store
+  execution --> store
+  ingest -.-> api
+  api --> gateway
+  gateway <-->|"HTTP：任务 / 目标 / 设置 / 查询与证据"| web
+  web -.->|"WebSocket：车端状态代理"| gateway
+  web <-->|"任务/回执"| task
+  web --> mode
+  status -.-> web
+  web --> camera
+  camera --> models
+  models --> events
+  events -.-> status
+  task ==>|"导航目标 / Action"| nav2
+  mode ==> manual
+  web ==> search
+  manual ==> controller
+  search ==> controller
+  nav2 ==> navspeed
+  navspeed ==> controller
+  controller ==>|"/cmd_vel"| driver
+  controller -.-> status
+  slam -->|"保存"| map
+  map --> amcl
+  map -->|"地图"| nav2
+  amcl -->|"位姿 / TF"| nav2
+  inputs -.-> status
+  inputs --> navigation
+  inputs ==> controller
+  camhw --> camera
+  lidarhw --> inputs
+  feedbackhw -.-> inputs
+  driver ==> motor
+  classDef default fill:white,stroke:black,color:black,stroke-width:1px;
+  linkStyle default stroke:black,color:black;

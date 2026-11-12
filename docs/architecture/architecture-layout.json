@@ -1,0 +1,1813 @@
+{
+  "width": 2560,
+  "height": 1440,
+  "nodes": [
+    {
+      "id": "host",
+      "x": 30,
+      "y": 115,
+      "w": 905,
+      "h": 1255,
+      "title": "主机端｜业务管理与智能编排",
+      "lines": [],
+      "size": 25,
+      "group": true,
+      "dashed": false
+    },
+    {
+      "id": "car",
+      "x": 1060,
+      "y": 115,
+      "w": 1470,
+      "h": 1060,
+      "title": "Jetson 车端｜ROS 2 Humble 感知、导航与控制",
+      "lines": [],
+      "size": 25,
+      "group": true,
+      "dashed": false
+    },
+    {
+      "id": "hardware",
+      "x": 1060,
+      "y": 1210,
+      "w": 1470,
+      "h": 160,
+      "title": "机器人硬件",
+      "lines": [],
+      "size": 25,
+      "group": true,
+      "dashed": false
+    },
+    {
+      "id": "execution",
+      "x": 65,
+      "y": 805,
+      "w": 640,
+      "h": 225,
+      "title": "持久任务执行与状态管理",
+      "lines": [],
+      "size": 25,
+      "group": true,
+      "dashed": true
+    },
+    {
+      "id": "vision",
+      "x": 1100,
+      "y": 480,
+      "w": 350,
+      "h": 480,
+      "title": "视觉感知",
+      "lines": [],
+      "size": 25,
+      "group": true,
+      "dashed": true
+    },
+    {
+      "id": "navigation",
+      "x": 1490,
+      "y": 480,
+      "w": 400,
+      "h": 480,
+      "title": "自主导航",
+      "lines": [],
+      "size": 25,
+      "group": true,
+      "dashed": true
+    },
+    {
+      "id": "control",
+      "x": 1925,
+      "y": 480,
+      "w": 575,
+      "h": 660,
+      "title": "运动控制与安全",
+      "lines": [],
+      "size": 25,
+      "group": true,
+      "dashed": true
+    },
+    {
+      "id": "desktop",
+      "x": 65,
+      "y": 185,
+      "w": 205,
+      "h": 115,
+      "title": "Windows",
+      "lines": [
+        "桌面入口",
+        "启动本机服务"
+      ],
+      "size": 24,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "ui",
+      "x": 315,
+      "y": 185,
+      "w": 390,
+      "h": 115,
+      "title": "React 管理控制台",
+      "lines": [
+        "悬浮 Agent 助手 / 任务卡片"
+      ],
+      "size": 27,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "api",
+      "x": 65,
+      "y": 375,
+      "w": 640,
+      "h": 105,
+      "title": "FastAPI 业务接口层",
+      "lines": [
+        "身份认证 · JWT · RBAC 权限管理"
+      ],
+      "size": 28,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "agent",
+      "x": 65,
+      "y": 535,
+      "w": 300,
+      "h": 215,
+      "title": "Agent 智能编排",
+      "lines": [
+        "提供器 ↔ 外部大模型 API",
+        "意图理解 · 工具注册与调用",
+        "计划组织 · 业务能力调用"
+      ],
+      "size": 26,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "business",
+      "x": 405,
+      "y": 535,
+      "w": 300,
+      "h": 215,
+      "title": "核心业务服务",
+      "lines": [
+        "地图路线 · 巡检 · 文件运输",
+        "异常事件 · 机器人状态",
+        "普通业务任务入口"
+      ],
+      "size": 26,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "worker",
+      "x": 85,
+      "y": 865,
+      "w": 180,
+      "h": 140,
+      "title": "助手计划推进",
+      "lines": [
+        "AssistantWorker",
+        "多步骤 / 人工交接"
+      ],
+      "size": 22,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "shared",
+      "x": 285,
+      "y": 865,
+      "w": 195,
+      "h": 140,
+      "title": "共享业务执行",
+      "lines": [
+        "导航 / 巡检 / 运输",
+        "搜索 / 短距动作"
+      ],
+      "size": 23,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "reconcile",
+      "x": 500,
+      "y": 865,
+      "w": 185,
+      "h": 140,
+      "title": "执行状态管理",
+      "lines": [
+        "任务对账 / 进度",
+        "结果持久记录"
+      ],
+      "size": 23,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "ingest",
+      "x": 65,
+      "y": 1085,
+      "w": 640,
+      "h": 90,
+      "title": "反馈同步与异常证据接收",
+      "lines": [
+        "遥测快照 · 任务回执 · 诊断日志 · 事件与图片"
+      ],
+      "size": 26,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "store",
+      "x": 65,
+      "y": 1250,
+      "w": 640,
+      "h": 90,
+      "title": "数据存储",
+      "lines": [
+        "业务数据库 · 会话 / 执行记录 · 媒体与异常证据"
+      ],
+      "size": 26,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "gateway",
+      "x": 755,
+      "y": 535,
+      "w": 170,
+      "h": 485,
+      "title": "主机通信适配",
+      "lines": [
+        "RobotGateway",
+        "HTTP 调用",
+        "任务 / 导航目标",
+        "模式 / 控制意图",
+        "状态 / 日志",
+        "异常证据",
+        "",
+        "状态 WS 代理",
+        "vehicle_control",
+        "",
+        "机器鉴权 / 租约"
+      ],
+      "size": 22,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "web",
+      "x": 1100,
+      "y": 185,
+      "w": 350,
+      "h": 140,
+      "title": "ROS 2 车端 Web 服务",
+      "lines": [
+        "web_app_node / Web API",
+        "鉴权 · 租约请求与回执"
+      ],
+      "size": 26,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "task",
+      "x": 1510,
+      "y": 185,
+      "w": 360,
+      "h": 140,
+      "title": "车端导航任务管理",
+      "lines": [
+        "NavigationTaskRunner",
+        "NavigationBridge · ROS 2 Action"
+      ],
+      "size": 25,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "mode",
+      "x": 1945,
+      "y": 185,
+      "w": 530,
+      "h": 140,
+      "title": "模式管理与控制意图接入",
+      "lines": [
+        "mode_manager · 手动 / 模式 / 急停",
+        "控制租约请求与回执"
+      ],
+      "size": 26,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "status",
+      "x": 1100,
+      "y": 370,
+      "w": 350,
+      "h": 65,
+      "title": "状态汇总与诊断反馈",
+      "lines": [],
+      "size": 25,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "camera",
+      "x": 1120,
+      "y": 535,
+      "w": 310,
+      "h": 70,
+      "title": "共享相机服务",
+      "lines": [
+        "CameraStream / 原始帧"
+      ],
+      "size": 25,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "models",
+      "x": 1120,
+      "y": 650,
+      "w": 310,
+      "h": 150,
+      "title": "通用与专项视觉模型",
+      "lines": [
+        "YOLOE 通用目标检测",
+        "人员倒地专项 · 烟火专项"
+      ],
+      "size": 25,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "events",
+      "x": 1120,
+      "y": 855,
+      "w": 310,
+      "h": 75,
+      "title": "异常候选与事件确认",
+      "lines": [
+        "图片 / 事件落盘 · 证据回传"
+      ],
+      "size": 23,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "slam",
+      "x": 1510,
+      "y": 535,
+      "w": 360,
+      "h": 70,
+      "title": "SLAM Toolbox 建图",
+      "lines": [],
+      "size": 25,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "map",
+      "x": 1510,
+      "y": 655,
+      "w": 165,
+      "h": 75,
+      "title": "地图资产",
+      "lines": [
+        "栅格保存 / 加载"
+      ],
+      "size": 23,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "amcl",
+      "x": 1710,
+      "y": 655,
+      "w": 160,
+      "h": 75,
+      "title": "AMCL 定位",
+      "lines": [
+        "map → odom"
+      ],
+      "size": 22,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "nav2",
+      "x": 1510,
+      "y": 845,
+      "w": 360,
+      "h": 85,
+      "title": "Nav2 路径规划与导航控制",
+      "lines": [
+        "规划器 · 控制器 · 速度平滑"
+      ],
+      "size": 24,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "manual",
+      "x": 1945,
+      "y": 535,
+      "w": 250,
+      "h": 80,
+      "title": "手动与其他模式意图",
+      "lines": [
+        "/manual_cmd 等"
+      ],
+      "size": 23,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "search",
+      "x": 2225,
+      "y": 655,
+      "w": 250,
+      "h": 80,
+      "title": "搜索控制意图",
+      "lines": [
+        "VisionService → 停车锁"
+      ],
+      "size": 23,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "navspeed",
+      "x": 1945,
+      "y": 655,
+      "w": 250,
+      "h": 80,
+      "title": "自动导航速度",
+      "lines": [
+        "/navigation/cmd_vel"
+      ],
+      "size": 24,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "controller",
+      "x": 1945,
+      "y": 845,
+      "w": 530,
+      "h": 130,
+      "title": "decision_controller",
+      "lines": [
+        "统一控制与安全仲裁",
+        "雷达安全检测 · 急停 · 超时 · 控制租约"
+      ],
+      "size": 30,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "driver",
+      "x": 1945,
+      "y": 1055,
+      "w": 530,
+      "h": 65,
+      "title": "Yahboom 底盘软件驱动",
+      "lines": [],
+      "size": 26,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "inputs",
+      "x": 1490,
+      "y": 1025,
+      "w": 400,
+      "h": 115,
+      "title": "ROS 2 传感与坐标信息",
+      "lines": [
+        "/scan · /odom · TF",
+        "雷达驱动 / 里程计 / IMU 滤波 / EKF"
+      ],
+      "size": 24,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "jetson",
+      "x": 1100,
+      "y": 1265,
+      "w": 260,
+      "h": 80,
+      "title": "Jetson Orin Nano",
+      "lines": [
+        "承载上方车端软件"
+      ],
+      "size": 24,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "camhw",
+      "x": 1385,
+      "y": 1265,
+      "w": 220,
+      "h": 80,
+      "title": "相机",
+      "lines": [
+        "USB 图像采集"
+      ],
+      "size": 25,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "lidarhw",
+      "x": 1630,
+      "y": 1265,
+      "w": 220,
+      "h": 80,
+      "title": "激光雷达",
+      "lines": [
+        "激光扫描数据"
+      ],
+      "size": 25,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "feedbackhw",
+      "x": 1875,
+      "y": 1265,
+      "w": 270,
+      "h": 80,
+      "title": "底盘反馈硬件",
+      "lines": [
+        "编码器 / IMU"
+      ],
+      "size": 25,
+      "group": false,
+      "dashed": false
+    },
+    {
+      "id": "motor",
+      "x": 2170,
+      "y": 1265,
+      "w": 305,
+      "h": 80,
+      "title": "Yahboom X3 底盘",
+      "lines": [
+        "四轮电机执行"
+      ],
+      "size": 25,
+      "group": false,
+      "dashed": false
+    }
+  ],
+  "edges": [
+    {
+      "id": "desktop-ui",
+      "source": "desktop",
+      "target": "ui",
+      "points": [
+        [
+          270,
+          242
+        ],
+        [
+          315,
+          242
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "ui-api",
+      "source": "ui",
+      "target": "api",
+      "points": [
+        [
+          665,
+          300
+        ],
+        [
+          665,
+          375
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": false,
+      "both": true
+    },
+    {
+      "id": "api-agent",
+      "source": "api",
+      "target": "agent",
+      "points": [
+        [
+          215,
+          480
+        ],
+        [
+          215,
+          535
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "api-business",
+      "source": "api",
+      "target": "business",
+      "points": [
+        [
+          555,
+          480
+        ],
+        [
+          555,
+          535
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "agent-business",
+      "source": "agent",
+      "target": "business",
+      "points": [
+        [
+          365,
+          642
+        ],
+        [
+          405,
+          642
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "agent-worker",
+      "source": "agent",
+      "target": "worker",
+      "points": [
+        [
+          175,
+          750
+        ],
+        [
+          175,
+          865
+        ]
+      ],
+      "label": "确认计划",
+      "at": [
+        174,
+        783
+      ],
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "business-shared",
+      "source": "business",
+      "target": "shared",
+      "points": [
+        [
+          555,
+          750
+        ],
+        [
+          555,
+          775
+        ],
+        [
+          382,
+          775
+        ],
+        [
+          382,
+          865
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "worker-shared",
+      "source": "worker",
+      "target": "shared",
+      "points": [
+        [
+          265,
+          935
+        ],
+        [
+          285,
+          935
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "shared-reconcile",
+      "source": "shared",
+      "target": "reconcile",
+      "points": [
+        [
+          480,
+          935
+        ],
+        [
+          500,
+          935
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": true,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "shared-gateway",
+      "source": "shared",
+      "target": "gateway",
+      "points": [
+        [
+          382,
+          1005
+        ],
+        [
+          382,
+          1055
+        ],
+        [
+          730,
+          1055
+        ],
+        [
+          730,
+          935
+        ],
+        [
+          755,
+          935
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": true,
+      "both": false
+    },
+    {
+      "id": "business-gateway",
+      "source": "business",
+      "target": "gateway",
+      "points": [
+        [
+          705,
+          600
+        ],
+        [
+          755,
+          600
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "gateway-ingest",
+      "source": "gateway",
+      "target": "ingest",
+      "points": [
+        [
+          755,
+          985
+        ],
+        [
+          740,
+          985
+        ],
+        [
+          740,
+          1130
+        ],
+        [
+          705,
+          1130
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": true,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "ingest-reconcile",
+      "source": "ingest",
+      "target": "reconcile",
+      "points": [
+        [
+          592,
+          1085
+        ],
+        [
+          592,
+          1005
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": true,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "ingest-store",
+      "source": "ingest",
+      "target": "store",
+      "points": [
+        [
+          385,
+          1175
+        ],
+        [
+          385,
+          1250
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "execution-store",
+      "source": "execution",
+      "target": "store",
+      "points": [
+        [
+          65,
+          945
+        ],
+        [
+          48,
+          945
+        ],
+        [
+          48,
+          1295
+        ],
+        [
+          65,
+          1295
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "ingest-api",
+      "source": "ingest",
+      "target": "api",
+      "points": [
+        [
+          65,
+          1125
+        ],
+        [
+          42,
+          1125
+        ],
+        [
+          42,
+          425
+        ],
+        [
+          65,
+          425
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": true,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "api-gateway",
+      "source": "api",
+      "target": "gateway",
+      "points": [
+        [
+          705,
+          425
+        ],
+        [
+          735,
+          425
+        ],
+        [
+          735,
+          550
+        ],
+        [
+          755,
+          550
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "http",
+      "source": "gateway",
+      "target": "web",
+      "points": [
+        [
+          925,
+          620
+        ],
+        [
+          980,
+          620
+        ],
+        [
+          980,
+          225
+        ],
+        [
+          1100,
+          225
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": false,
+      "both": true
+    },
+    {
+      "id": "ws",
+      "source": "web",
+      "target": "gateway",
+      "points": [
+        [
+          1100,
+          285
+        ],
+        [
+          1020,
+          285
+        ],
+        [
+          1020,
+          760
+        ],
+        [
+          925,
+          760
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": true,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "web-task",
+      "source": "web",
+      "target": "task",
+      "points": [
+        [
+          1450,
+          255
+        ],
+        [
+          1510,
+          255
+        ]
+      ],
+      "label": "任务/回执",
+      "at": [
+        1480,
+        230
+      ],
+      "dashed": false,
+      "control": false,
+      "both": true
+    },
+    {
+      "id": "web-mode",
+      "source": "web",
+      "target": "mode",
+      "points": [
+        [
+          1320,
+          185
+        ],
+        [
+          1320,
+          157
+        ],
+        [
+          2210,
+          157
+        ],
+        [
+          2210,
+          185
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "status-web",
+      "source": "status",
+      "target": "web",
+      "points": [
+        [
+          1275,
+          370
+        ],
+        [
+          1275,
+          325
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": true,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "web-camera",
+      "source": "web",
+      "target": "camera",
+      "points": [
+        [
+          1100,
+          300
+        ],
+        [
+          1082,
+          300
+        ],
+        [
+          1082,
+          570
+        ],
+        [
+          1120,
+          570
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "camera-models",
+      "source": "camera",
+      "target": "models",
+      "points": [
+        [
+          1275,
+          605
+        ],
+        [
+          1275,
+          650
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "models-events",
+      "source": "models",
+      "target": "events",
+      "points": [
+        [
+          1275,
+          800
+        ],
+        [
+          1275,
+          855
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "events-status",
+      "source": "events",
+      "target": "status",
+      "points": [
+        [
+          1430,
+          892
+        ],
+        [
+          1468,
+          892
+        ],
+        [
+          1468,
+          402
+        ],
+        [
+          1450,
+          402
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": true,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "task-nav2",
+      "source": "task",
+      "target": "nav2",
+      "points": [
+        [
+          1690,
+          325
+        ],
+        [
+          1690,
+          390
+        ],
+        [
+          1498,
+          390
+        ],
+        [
+          1498,
+          887
+        ],
+        [
+          1510,
+          887
+        ]
+      ],
+      "label": "导航目标 / Action",
+      "at": [
+        1660,
+        425
+      ],
+      "dashed": false,
+      "control": true,
+      "both": false
+    },
+    {
+      "id": "mode-manual",
+      "source": "mode",
+      "target": "manual",
+      "points": [
+        [
+          1945,
+          285
+        ],
+        [
+          1933,
+          285
+        ],
+        [
+          1933,
+          575
+        ],
+        [
+          1945,
+          575
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": true,
+      "both": false
+    },
+    {
+      "id": "web-search",
+      "source": "web",
+      "target": "search",
+      "points": [
+        [
+          1450,
+          300
+        ],
+        [
+          1480,
+          300
+        ],
+        [
+          1480,
+          450
+        ],
+        [
+          2495,
+          450
+        ],
+        [
+          2495,
+          695
+        ],
+        [
+          2475,
+          695
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": true,
+      "both": false
+    },
+    {
+      "id": "manual-control",
+      "source": "manual",
+      "target": "controller",
+      "points": [
+        [
+          2070,
+          615
+        ],
+        [
+          2208,
+          615
+        ],
+        [
+          2208,
+          800
+        ],
+        [
+          2210,
+          800
+        ],
+        [
+          2210,
+          845
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": true,
+      "both": false
+    },
+    {
+      "id": "search-control",
+      "source": "search",
+      "target": "controller",
+      "points": [
+        [
+          2350,
+          735
+        ],
+        [
+          2350,
+          845
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": true,
+      "both": false
+    },
+    {
+      "id": "nav2-speed",
+      "source": "nav2",
+      "target": "navspeed",
+      "points": [
+        [
+          1870,
+          890
+        ],
+        [
+          1910,
+          890
+        ],
+        [
+          1910,
+          695
+        ],
+        [
+          1945,
+          695
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": true,
+      "both": false
+    },
+    {
+      "id": "speed-control",
+      "source": "navspeed",
+      "target": "controller",
+      "points": [
+        [
+          2070,
+          735
+        ],
+        [
+          2070,
+          845
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": true,
+      "both": false
+    },
+    {
+      "id": "control-driver",
+      "source": "controller",
+      "target": "driver",
+      "points": [
+        [
+          2210,
+          975
+        ],
+        [
+          2210,
+          1055
+        ]
+      ],
+      "label": "/cmd_vel",
+      "at": [
+        2210,
+        1019
+      ],
+      "dashed": false,
+      "control": true,
+      "both": false
+    },
+    {
+      "id": "control-status",
+      "source": "controller",
+      "target": "status",
+      "points": [
+        [
+          2475,
+          900
+        ],
+        [
+          2520,
+          900
+        ],
+        [
+          2520,
+          350
+        ],
+        [
+          1475,
+          350
+        ],
+        [
+          1475,
+          402
+        ],
+        [
+          1450,
+          402
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": true,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "slam-map",
+      "source": "slam",
+      "target": "map",
+      "points": [
+        [
+          1592,
+          605
+        ],
+        [
+          1592,
+          655
+        ]
+      ],
+      "label": "保存",
+      "at": [
+        1592,
+        635
+      ],
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "map-amcl",
+      "source": "map",
+      "target": "amcl",
+      "points": [
+        [
+          1675,
+          692
+        ],
+        [
+          1710,
+          692
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "map-nav2",
+      "source": "map",
+      "target": "nav2",
+      "points": [
+        [
+          1592,
+          730
+        ],
+        [
+          1592,
+          845
+        ]
+      ],
+      "label": "地图",
+      "at": [
+        1592,
+        790
+      ],
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "amcl-nav2",
+      "source": "amcl",
+      "target": "nav2",
+      "points": [
+        [
+          1790,
+          730
+        ],
+        [
+          1790,
+          845
+        ]
+      ],
+      "label": "位姿 / TF",
+      "at": [
+        1790,
+        790
+      ],
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "sensor-status",
+      "source": "inputs",
+      "target": "status",
+      "points": [
+        [
+          1490,
+          1115
+        ],
+        [
+          1460,
+          1115
+        ],
+        [
+          1460,
+          420
+        ],
+        [
+          1450,
+          420
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": true,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "sensor-nav",
+      "source": "inputs",
+      "target": "navigation",
+      "points": [
+        [
+          1540,
+          1025
+        ],
+        [
+          1540,
+          960
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "sensor-control",
+      "source": "inputs",
+      "target": "controller",
+      "points": [
+        [
+          1890,
+          1080
+        ],
+        [
+          1900,
+          1080
+        ],
+        [
+          1900,
+          945
+        ],
+        [
+          1945,
+          945
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": true,
+      "both": false
+    },
+    {
+      "id": "cam-svc",
+      "source": "camhw",
+      "target": "camera",
+      "points": [
+        [
+          1495,
+          1265
+        ],
+        [
+          1495,
+          1190
+        ],
+        [
+          1074,
+          1190
+        ],
+        [
+          1074,
+          570
+        ],
+        [
+          1120,
+          570
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "lidar-input",
+      "source": "lidarhw",
+      "target": "inputs",
+      "points": [
+        [
+          1740,
+          1265
+        ],
+        [
+          1740,
+          1140
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "feedback-input",
+      "source": "feedbackhw",
+      "target": "inputs",
+      "points": [
+        [
+          2010,
+          1265
+        ],
+        [
+          2010,
+          1190
+        ],
+        [
+          1830,
+          1190
+        ],
+        [
+          1830,
+          1140
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": true,
+      "control": false,
+      "both": false
+    },
+    {
+      "id": "driver-motor",
+      "source": "driver",
+      "target": "motor",
+      "points": [
+        [
+          2310,
+          1120
+        ],
+        [
+          2310,
+          1265
+        ]
+      ],
+      "label": "",
+      "at": null,
+      "dashed": false,
+      "control": true,
+      "both": false
+    }
+  ],
+  "notes": [
+    {
+      "x": 974,
+      "y": 470,
+      "text": "HTTP",
+      "size": 22,
+      "anchor": "middle"
+    },
+    {
+      "x": 1018,
+      "y": 825,
+      "text": "WS",
+      "size": 22,
+      "anchor": "middle"
+    },
+    {
+      "x": 997,
+      "y": 925,
+      "text": "局域网",
+      "size": 23,
+      "anchor": "middle"
+    },
+    {
+      "x": 997,
+      "y": 960,
+      "text": "通信边界",
+      "size": 23,
+      "anchor": "middle"
+    },
+    {
+      "x": 2180,
+      "y": 395,
+      "text": "运行状态 / 控制回执",
+      "size": 21,
+      "anchor": "middle"
+    },
+    {
+      "x": 2380,
+      "y": 1202,
+      "text": "底盘串口控制",
+      "size": 21,
+      "anchor": "middle"
+    },
+    {
+      "x": 1740,
+      "y": 1206,
+      "text": "/scan",
+      "size": 21,
+      "anchor": "middle"
+    },
+    {
+      "x": 2010,
+      "y": 1225,
+      "text": "编码器 / IMU 数据",
+      "size": 20,
+      "anchor": "middle"
+    },
+    {
+      "x": 1280,
+      "y": 58,
+      "text": "智巡 InsightRover 系统总体架构",
+      "size": 42,
+      "anchor": "middle"
+    },
+    {
+      "x": 1280,
+      "y": 96,
+      "text": "用户请求 → 业务编排 → 任务下发 → 现场感知与导航 → 安全执行 → 状态与证据反馈",
+      "size": 25,
+      "anchor": "middle"
+    },
+    {
+      "x": 325,
+      "y": 334,
+      "text": "HTTP：业务请求　WS：状态",
+      "size": 20,
+      "anchor": "middle"
+    },
+    {
+      "x": 325,
+      "y": 360,
+      "text": "SSE：助手回复与执行事件",
+      "size": 20,
+      "anchor": "middle"
+    },
+    {
+      "x": 833,
+      "y": 1060,
+      "text": "同一主机进程内",
+      "size": 20,
+      "anchor": "middle"
+    },
+    {
+      "x": 1280,
+      "y": 1415,
+      "text": "实线箭头：业务调用 / 数据输入　　粗实线：运动控制意图与执行　　虚线：状态 / 回执 / 证据反馈",
+      "size": 22,
+      "anchor": "middle"
+    }
+  ]
+}
