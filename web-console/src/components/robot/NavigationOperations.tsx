@@ -64,6 +64,8 @@ export function NavigationTaskPanel({ api, online, aligned, calibration, drawing
   const [task, setTask] = useState<NavigationTaskState>({ state: "idle", message: "选择目的地后创建运输，或添加多个巡航站点" });
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [pollError, setPollError] = useState("");
   const requestId = useRef(createMapRequestId());
+  const taskRef = useRef(task); taskRef.current = task;
+  const submittedRequest = useRef<Record<string,unknown> | null>(null);
   const catalog = useData(async () => {
     if (!session) return { robots: [], tasks: [] };
     const permissions = session.user.role?.permissions.map(p => p.name) || [];
@@ -75,43 +77,72 @@ export function NavigationTaskPanel({ api, online, aligned, calibration, drawing
   const permitted = !!session?.user.role?.permissions.some(p => p.name === (kind === "delivery" ? "missions.manage" : "patrol.manage"));
   useEffect(() => { onActive(active); }, [active, onActive]);
   useEffect(() => {
-    setQueue([]); requestId.current = createMapRequestId();
+    setQueue([]); if (!submittedRequest.current) requestId.current = createMapRequestId();
   }, [mapKey, drawing.id, drawing.revision, calibration?.matrix.join(",")]);
   useEffect(() => {
     if (!online) return;
     let alive = true, timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       try {
-        let value = await api.getNavigationTask();
+        const current = taskRef.current;
+        if (current.poll_required === false || (current.next_poll_at || 0) > Date.now()/1000) {
+          if (alive) timer = setTimeout(() => void poll(), 2500);
+          return;
+        }
+        let value = current.task_id && current.kind && !finished.has(current.state)
+          ? await businessApi.getTaskExecution(current.kind,current.task_id) : await api.getNavigationTask();
         if (value.task_id && value.kind && session) value = await businessApi.getTaskExecution(value.kind, value.task_id);
-        if (alive) { setTask(previous => acceptTaskState(previous, value)); setPollError(""); }
+        if (alive && taskRef.current.run_id === current.run_id) { setTask(previous => acceptTaskState(previous, value)); setPollError(""); }
       } catch (e) { if (alive) setPollError((e as Error).message); }
       if (alive) timer = setTimeout(() => void poll(), 1200);
     };
     void poll(); return () => { alive = false; clearTimeout(timer); };
   }, [api, online, session?.user.id]);
+  useEffect(() => {
+    if (!taskId || !session) return;
+    let alive = true;
+    void businessApi.getTaskExecution(kind,taskId).then(value => {
+      if(alive && value.run_id) { taskRef.current=value; setTask(value); setPollError(''); }
+    }).catch(e => { if(alive) setError((e as Error).message); });
+    return () => { alive=false; };
+  }, [taskId,kind,session?.user.id]);
+  function newTask() {
+    submittedRequest.current=null; requestId.current=createMapRequestId(); setTaskId('');
+    const idle={state:'idle',message:'旧任务已结束，可选择新目标创建新任务'};
+    taskRef.current=idle;setTask(idle);setError('');setPollError('');
+  }
   async function create() {
     if (!calibration || !aligned || active || busy) return;
     const points = kind === "delivery" ? target ? [target] : [] : queue;
     if (!points.length) return;
     setBusy(true); setError("");
     try {
-      const result = await businessApi.createNavigationTask({ run_id: requestId.current, task_id: taskId || undefined, kind, name,
+      const payload = submittedRequest.current ?? { run_id: requestId.current, task_id: taskId || undefined, kind, name,
         robot_id: robotId, map_id: mapId, map_key: mapKey, control_session_id: controlSessionId, calibration_matrix: calibration.matrix,
         calibration_drawing: drawing, waypoints: points, return_to_start: returning,
-        ...(kind === 'patrol' ? {cycles, dwell_sec: dwellSec} : {}) });
-      setTask(previous => acceptTaskState(previous, result)); requestId.current = createMapRequestId();
+        ...(kind === 'patrol' ? {cycles, dwell_sec: dwellSec} : {}) };
+      submittedRequest.current = payload;
+      const result = await businessApi.createNavigationTask(payload);
+      taskRef.current = result; setTask(previous => acceptTaskState(previous, result));
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }
   async function act(action: string) {
     if (!task.task_id || !task.run_id || !task.kind || busy) return;
     setBusy(true); setError("");
-    try { const next = await businessApi.taskExecutionAction(task.kind, task.task_id, task.run_id, action); setTask(previous => acceptTaskState(previous, next)); }
+    try {
+      const next = await businessApi.taskExecutionAction(task.kind, task.task_id, task.run_id, action === 'recreate' ? 'cancel' : action);
+      taskRef.current = next; setTask(previous => acceptTaskState(previous, next));
+      if (action === 'recreate') {
+        if(next.state !== 'cancelled') throw new Error('旧请求尚未确认取消，不能更换目标');
+        submittedRequest.current = null; requestId.current = createMapRequestId(); setTaskId('');
+      }
+    }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }
   const actions: Record<string, [string, string][]> = {
+    unconfirmed: [["retry", "核对并重试原请求"]],
     waiting_load: [["loaded", "已装件，开始运输"]], prepared: [["start", "开始巡航"]],
     planning: [["pause", "暂停"]], running: [["pause", "暂停"]], returning: [["pause", "暂停"]], dwelling: [["pause", "暂停"]],
     paused: [["resume", "重新规划并恢复"]], waiting_handover: [["handover", task.return_to_start ? "已取件，返回起点" : "已取件，完成任务"]],
@@ -119,19 +150,22 @@ export function NavigationTaskPanel({ api, online, aligned, calibration, drawing
   return <section className="navigation-task-panel">
     <strong>文件运输与多点巡航</strong>
     <CorridorSetup target={target} calibration={calibration} mapKey={mapKey} controlSessionId={controlSessionId} locked={active || !online}/>
-    {!active && <>
+    {!active && (!submittedRequest.current || task.state === "idle") && <>
       <label>任务类型<select aria-label="导航任务类型" value={kind} onChange={e => { const next = e.target.value as typeof kind; setKind(next); setName(next === "delivery" ? "文件运输" : "多点巡航"); setTaskId(""); }}><option value="delivery">文件运输</option><option value="patrol">多点巡航</option></select></label>
       <label>业务任务<select aria-label="关联业务任务" value={taskId} onChange={e => setTaskId(e.target.value)}><option value="">新建任务</option>{catalog.data?.tasks.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
       {!taskId && <><label>任务名称<input maxLength={128} value={name} onChange={e => setName(e.target.value)}/></label><label>关联小车<select aria-label="执行任务的小车" value={robotId} onChange={e => setRobotId(e.target.value)}><option value="">请选择</option>{catalog.data?.robots.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}</select></label></>}
       {kind === "patrol" ? <><button className="btn btn-outline" disabled={!target || queue.length >= 30} onClick={() => { if (target) setQueue([...queue, { ...target }]); }}>将当前目的地加入巡航</button><ol>{queue.map((p, i) => <li key={i}>{p.name}<button aria-label={`移除第${i + 1}站`} onClick={() => setQueue(queue.filter((_, n) => n !== i))}>移除</button></li>)}</ol></> : <p>送达：{target?.name || "请在地图上选择目的地"}</p>}
       {kind === 'patrol' && <><label>巡航圈数<input type="number" min={1} max={100} step={1} value={cycles} onChange={e => setCycles(Number(e.target.value))}/></label><label>每站停留（秒）<input type="number" min={0} max={600} value={dwellSec} onChange={e => setDwellSec(Number(e.target.value))}/></label><p>按站点顺序巡航，停留时持续观察；报警后继续执行。实际达到20米、10分钟后才满足文档的距离与时间指标。</p></>}
       <label><input type="checkbox" checked={returning} onChange={e => setReturning(e.target.checked)}/>{kind === 'patrol' ? '完成后返回巡航起点' : '完成后返回装件起点'}</label>
-      <button className="btn btn-primary navigation-action" disabled={!permitted || !online || !aligned || busy || !!pollError || (!taskId && !robotId) || !(kind === "delivery" ? target : queue.length)} onClick={() => void create()}>{busy ? "正在创建…" : "创建执行任务"}</button>
+      <button className="btn btn-primary navigation-action" disabled={!permitted || !online || !aligned || busy || !!pollError || (!taskId && !robotId) || !(kind === "delivery" ? target : queue.length)} onClick={() => void create()}>{busy ? "正在核对…" : submittedRequest.current ? "核对并重试原请求" : "创建执行任务"}</button>
     </>}
+    {!active && task.state !== 'idle' && submittedRequest.current && <button className="btn btn-outline" onClick={newTask}>新建任务</button>}
     <p role="status">{task.message}</p>
     {task.goals && <small>已完成检查点 {task.completed_stops || 0} / {task.total_stops || task.goals.length}；里程 {task.distance_m?.toFixed(1) ?? '—'} m；执行时长 {Math.floor(task.elapsed_sec || 0)} 秒</small>}
-    {active && (actions[task.state] || []).map(([action, label]) => <button key={action} className="btn btn-primary navigation-action" disabled={busy || !online || !!pollError} onClick={() => void act(action)}>{label}</button>)}
+    {active && (actions[task.state] || []).map(([action, label]) => <button key={action} className="btn btn-primary navigation-action" disabled={busy || !online || !!pollError && action !== "retry" || task.sync_state === "cancel_pending"} onClick={() => void act(action)}>{label}</button>)}
     {active && <button className="btn btn-outline navigation-action" disabled={busy || !online} onClick={() => void act("cancel")}>取消任务并停车</button>}
+    {active && task.task_id && <button className="btn btn-outline" disabled={busy || !online} onClick={() => void act('recreate')}>取消旧任务并重新创建</button>}
+    {task.sync_state && task.sync_state !== 'confirmed' && <p role="status">{task.message}。未确认取消前不要更换目标。</p>}
     {task.task_id && <Link to={`/tasks/${task.task_id}`}>查看业务任务记录</Link>}
     {(error || pollError || catalog.error) && <p className="navigation-error" role="alert">{error || pollError || catalog.error}</p>}
     {!session && <p>登录系统账户后可保存并执行任务。</p>}

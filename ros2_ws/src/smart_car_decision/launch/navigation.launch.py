@@ -1,6 +1,7 @@
 """Humble Nav2 with every velocity output routed through decision_controller."""
 import atexit
 import tempfile
+import math
 from pathlib import Path
 
 import yaml
@@ -23,6 +24,22 @@ def merge_parameters(base, overrides):
     return base
 
 
+def validate_goal_tolerances(parameters):
+    """Reject a merged DWB window that can strand the robot outside arrival."""
+    controller = parameters['controller_server']['ros__parameters']
+    if 'FollowPath' not in controller.get('controller_plugins', []):
+        raise RuntimeError('Expected FollowPath controller for goal tolerance validation')
+    names = controller.get('goal_checker_plugins', [])
+    if not names:
+        raise RuntimeError('Goal Checker plugins must be explicit after Nav2 parameter merge')
+    dwb = controller['FollowPath'].get('xy_goal_tolerance')
+    values = [dwb] + [controller[name].get('xy_goal_tolerance') for name in names]
+    if any(type(v) not in (int, float) or not math.isfinite(v) or v <= 0 for v in values):
+        raise RuntimeError('Goal tolerances must be finite positive distances')
+    if any(dwb > value for value in values[1:]):
+        raise RuntimeError('DWB RotateToGoal window exceeds Goal Checker XY tolerance')
+
+
 def launch_navigation(context):
     share = Path(get_package_share_directory("smart_car_decision"))
     nav_share = Path(get_package_share_directory("nav2_bringup"))
@@ -33,6 +50,7 @@ def launch_navigation(context):
     parameters = yaml.safe_load((nav_share / "params" / "nav2_params.yaml").read_text())
     overrides = yaml.safe_load((share / "config" / "navigation.yaml").read_text())
     merge_parameters(parameters, overrides)
+    validate_goal_tolerances(parameters)
     radius = float(LaunchConfiguration('robot_radius').perform(context))
     if not BOUNDING_RADIUS_M <= radius <= 2: raise RuntimeError('Robot radius must enclose the confirmed body')
     keepout = LaunchConfiguration('keepout').perform(context)

@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "roles": {
+    "base": {
+      "alias": "/dev/robot_base",
+      "confirmed": false,
+      "evidence": "Candidate only: unoccupied long-present USB 2.2.3; passive protocol and cable verification pending",
+      "match": {
+        "ID_VENDOR_ID": "1a86",
+        "ID_MODEL_ID": "7523",
+        "ID_USB_INTERFACE_NUM": "00",
+        "ID_PATH": "platform-3610000.usb-usb-0:2.2.3:1.0"
+      }
+    },
+    "smoke": {
+      "alias": "/dev/smoke_sensor",
+      "confirmed": false,
+      "evidence": "User reports MQ-2 via probable STM32 USB; USB 2.3 role and firmware protocol still unverified",
+      "match": {
+        "ID_VENDOR_ID": "1a86",
+        "ID_MODEL_ID": "7523",
+        "ID_USB_INTERFACE_NUM": "00",
+        "ID_PATH": "platform-3610000.usb-usb-0:2.3:1.0"
+      }
+    }
+  }
+}

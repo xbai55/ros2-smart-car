@@ -1000,8 +1000,11 @@ def create_app(
 
     @app.get("/api/navigation/task")
     def navigation_task(run_id: str | None = None):
+        from .navigation_tasks import NavigationRunMissing
         try:
             return navigation_component("navigation_tasks").snapshot_for(run_id)
+        except NavigationRunMissing as exc:
+            raise HTTPException(404, {'code':'NAVIGATION_RUN_NOT_FOUND','message':str(exc),'run_id':run_id}) from exc
         except ValueError as exc:
             raise navigation_error(exc) from exc
 

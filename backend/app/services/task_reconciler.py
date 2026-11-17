@@ -33,33 +33,25 @@ async def reconcile_once(session_factory=SessionLocal):
                 if previous and previous.get("run_id") and previous.get("state") not in TERMINAL:
                     pending.append((model, task.id, previous["run_id"]))
     gateway = get_robot_gateway(binding[1])
+    from .task_sync import refresh_execution
     for model, task_id, run_id in pending:
         try:
-            value = await gateway.navigation_request("task", query={"run_id": run_id})
-            if (not isinstance(value, dict) or value.get("run_id") != run_id
-                    or value.get("task_id") != task_id or value.get("state") not in VEHICLE_STATES):
-                continue
             with session_factory() as db:
-                # A changed physical binding invalidates in-flight replies.
                 if vehicle_binding(db) != binding:
                     return
                 task = db.get(model, task_id)
                 if task is None or task.robot_id != binding[0]:
                     continue
                 previous = execution(task)
-                if not previous or previous.get("run_id") != run_id:
+                if not previous or previous.get('run_id') != run_id:
                     continue
-                store_execution(db, task, value)
-                db.commit()
-                accepted = execution(task)
-                if accepted and accepted.get('state') != previous.get('state'):
-                    diagnostic_emit('task.changed', accepted['state'], module='task_reconciler',
-                                    robot_id=binding[0], task_id=task_id, run_id=run_id,
-                                    level='WARN' if accepted['state'] == 'failed' else 'INFO',
-                                    details={'state': accepted['state']})
-            await control_lease_manager.observe_run(accepted)
+                accepted = await refresh_execution(db, task, gateway, binding_guard=lambda:vehicle_binding(db)==binding)
+                if accepted and (accepted.get('state'),accepted.get('sync_state')) != (previous.get('state'),previous.get('sync_state')):
+                    diagnostic_emit('task.changed', accepted.get('sync_state',accepted['state']),module='task_reconciler',
+                                    robot_id=binding[0],task_id=task_id,run_id=run_id,details={'state':accepted['state']})
+                await control_lease_manager.observe_run(accepted)
         except Exception:
-            logger.debug("Vehicle task reconciliation pending for %s", task_id, exc_info=True)
+            logger.debug('Vehicle task reconciliation pending for %s',task_id,exc_info=True)
 
 
 async def run_task_reconciler():

@@ -240,8 +240,7 @@ def test_cancel_unconfirmed_request_creates_tombstone_and_blocks_delayed_create(
         task, node, payload = runner(tmp_path)
         result = await task.action({"run_id": "run1", "task_id": "business1", "kind": "delivery", "action": "cancel"})
         assert result["state"] == "cancelled" and task.snapshot()["state"] == "idle"
-        with pytest.raises(RuntimeError):
-            await task.create(payload)
+        assert (await task.create(payload))['state'] == 'cancelled'
         assert not node.navigation.starts
     asyncio.run(scenario())
 
@@ -260,3 +259,26 @@ def test_current_index_failure_keeps_created_run_cancellable(tmp_path, monkeypat
     monkeypatch.setattr("smart_car_decision.navigation_tasks._write_record", original)
     result = asyncio.run(task.action({"run_id": "run1", "action": "cancel"}))
     assert result["state"] == "cancelled" and not node.navigation.starts
+
+
+def test_concurrent_cancel_and_create_cannot_resurrect_after_restart(tmp_path):
+    from smart_car_decision.navigation_tasks import NavigationTaskRunner
+    async def run():
+        task,node,payload=runner(tmp_path)
+        cancel={'run_id':payload['run_id'],'task_id':payload['task_id'],'kind':payload['kind'],'action':'cancel'}
+        await asyncio.gather(task.action(cancel),task.create(payload))
+        assert task.snapshot_for(payload['run_id'])['state']=='cancelled'
+        restarted=NavigationTaskRunner(node,path=task.path)
+        assert (await restarted.create(payload))['state']=='cancelled'
+        assert not node.navigation.starts
+    asyncio.run(run())
+
+
+def test_wrong_business_identity_cannot_cancel_current_run(tmp_path):
+    async def run():
+        task,node,payload=runner(tmp_path)
+        await task.create(payload)
+        with pytest.raises(RuntimeError,match='不匹配'):
+            await task.action({'run_id':payload['run_id'],'task_id':'someone-else','kind':payload['kind'],'action':'cancel'})
+        assert task.active and not node.navigation.starts
+    asyncio.run(run())

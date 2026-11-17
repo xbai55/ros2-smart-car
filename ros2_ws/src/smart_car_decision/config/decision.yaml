@@ -15,7 +15,8 @@ decision_controller:
     front_distance_percentile: 20.0
     obstacle_stop_distance: 0.45
     obstacle_slow_distance: 0.75
-    mode_obstacle_stop_distances: '{"stop": 0.0, "manual": 0.0, "auto": 0.45, "mapping": 0.0, "navigation": 0.45, "color_track": 0.45, "object_follow": 0.45}'
+    mode_obstacle_stop_distances: '{"stop": 0.0, "manual": 0.0, "auto": 0.45, "mapping":
+      0.0, "navigation": 0.12, "color_track": 0.45, "object_follow": 0.45}'
     cruise_speed: 0.28
     slow_speed: 0.12
     turn_speed: 1.0
@@ -28,7 +29,6 @@ decision_controller:
     publish_rate_hz: 20.0
     avoidance_motion_model: holonomic
     avoidance_assume_missing_clear: false
-
 laser_obstacle_monitor:
   ros__parameters:
     scan_topic: /scan
@@ -38,22 +38,20 @@ laser_obstacle_monitor:
     front_distance_percentile: 20.0
     obstacle_distance: 0.45
     publish_rate_hz: 10.0
-
 tcp_command_bridge:
   ros__parameters:
     host: 0.0.0.0
     port: 9999
     manual_cmd_topic: /manual_cmd
-
 yolo11_camera_node:
   ros__parameters:
-    camera_source: "0"
+    camera_source: '0'
     camera_fourcc: MJPG
     camera_width: 640
     camera_height: 480
     camera_fps: 30.0
-    model_path: ~/.ros/insightrover/models/yoloe-11s-traffic.pt
-    device: "0"
+    model_path: /dev/shm/insightrover-vision-20261028/models/yoloe-11s-traffic.pt
+    device: '0'
     imgsz: 640
     confidence: 0.35
     tracking_confidence: 0.1
@@ -67,7 +65,9 @@ yolo11_camera_node:
     annotated_jpeg_quality: 72
     camera_buffer_size: 1
     mode_topic: /robot/mode
-    active_modes: [auto, object_follow]
+    active_modes:
+    - auto
+    - object_follow
     default_command: no_light
     safety_hold_sec: 0.8
     min_frame_brightness: 20.0
@@ -77,8 +77,8 @@ yolo11_camera_node:
     person_max_center_jump_ratio: 0.3
     red_ratio_threshold: 0.08
     green_ratio_threshold: 0.08
-    class_command_map: '{"stop sign": "stop", "person": "slow", "car": "slow", "truck": "slow", "bus": "slow", "motorcycle": "slow", "bicycle": "slow"}'
-
+    class_command_map: '{"stop sign": "stop", "person": "slow", "car": "slow", "truck":
+      "slow", "bus": "slow", "motorcycle": "slow", "bicycle": "slow"}'
 mode_manager:
   ros__parameters:
     initial_mode: stop
@@ -87,10 +87,9 @@ mode_manager:
     emergency_stop_topic: /robot/emergency_stop
     emergency_stop_set_topic: /robot/emergency_stop/set
     publish_rate_hz: 5.0
-
 color_tracker_node:
   ros__parameters:
-    camera_source: "0"
+    camera_source: '0'
     camera_fourcc: MJPG
     camera_width: 1280
     camera_height: 720
@@ -106,9 +105,14 @@ color_tracker_node:
     camera_buffer_size: 1
     process_rate_hz: 20.0
     min_area: 500.0
-    hsv_low: [35, 60, 60]
-    hsv_high: [90, 255, 255]
-
+    hsv_low:
+    - 35
+    - 60
+    - 60
+    hsv_high:
+    - 90
+    - 255
+    - 255
 object_follow_node:
   ros__parameters:
     mode_topic: /robot/mode
@@ -116,7 +120,6 @@ object_follow_node:
     lane_offset_topic: /lane/offset
     offset_timeout_sec: 0.7
     publish_rate_hz: 10.0
-
 system_status_node:
   ros__parameters:
     status_topic: /robot/status
@@ -138,12 +141,11 @@ system_status_node:
     cmd_vel_timeout_sec: 0.7
     tf_check_period_sec: 0.2
     publish_rate_hz: 5.0
-
 web_app_node:
   ros__parameters:
     host: 0.0.0.0
     port: 8080
-    static_dir: /home/jetson/ros2-smart-car/web-console/dist
+    static_dir: /home/jetson/insightrover-v411-task-consistency-37926128f27a/web-console/dist
     status_topic: /robot/status
     mode_set_topic: /robot/mode/set
     manual_cmd_topic: /manual_cmd
@@ -157,7 +159,7 @@ web_app_node:
     mission_task_topic: /mission_task/set
     patrol_progress_topic: /patrol_task/progress
     mission_state_topic: /mission_task/state
-    camera_source: "0"
+    camera_source: '0'
     video_fps: 30.0
     video_fourcc: MJPG
     video_width: 1280

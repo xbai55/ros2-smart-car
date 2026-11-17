@@ -74,7 +74,7 @@ def generate_launch_description():
                 description="A1 vendor mounting yaw candidate in radians. Confirm front/side obstacles while stationary before movement acceptance.",
             ),
             ExecuteProcess(
-                cmd=["ros2", "run", "yahboomcar_bringup", "Mcnamu_driver_X3"],
+                cmd=["ros2", "run", "smart_car_decision", "verified_base_driver"],
                 name="yahboom_base_driver",
                 output="screen",
                 emulate_tty=True,

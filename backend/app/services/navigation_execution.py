@@ -26,6 +26,10 @@ def store_execution(db, task, value):
         if previous and previous.get("run_id") != value.get("run_id"):
             raise _error(409, "任务执行标识已变化")
         if previous:
+            # Immutable dispatch survives vehicle replies and is the only retry source.
+            value = {**value, **{k:previous[k] for k in ('request','request_fingerprint') if k in previous}}
+            if previous.get('sync_state') == 'cancel_pending' and value['state'] not in {'completed','cancelled','failed'} and value.get('sync_state') != 'cancel_pending':
+                return False
             if previous.get("state") in {"completed", "cancelled", "failed"} and value["state"] != previous["state"]:
                 return False
             if value.get("version", 0) < previous.get("version", 0) or value == previous:

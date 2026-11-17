@@ -24,6 +24,7 @@ setup(
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
+            "verified_base_driver = smart_car_decision.verified_base_driver:main",
             "decision_controller = smart_car_decision.decision_controller:main",
             "mode_manager = smart_car_decision.mode_manager:main",
             "laser_obstacle_monitor = smart_car_decision.laser_obstacle_monitor:main",

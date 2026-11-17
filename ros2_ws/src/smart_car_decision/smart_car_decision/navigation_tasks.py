@@ -36,6 +36,10 @@ def _write_record(path, value):
             os.unlink(temporary)
 
 
+class NavigationRunMissing(ValueError):
+    pass
+
+
 class NavigationTaskRunner:
     def __init__(self, node, path="~/.ros/insightrover/navigation-task.json", *, require_lease=False):
         self.node, self.path = node, Path(path).expanduser()
@@ -88,7 +92,7 @@ class NavigationTaskRunner:
             return self.snapshot()
         path = self.path.parent / "navigation-runs" / (hashlib.sha256(run_id.encode()).hexdigest() + ".json")
         if not path.is_file():
-            raise ValueError("车端没有此任务的执行记录")
+            raise NavigationRunMissing("车端没有此任务的执行记录")
         value = json.loads(path.read_text(encoding="utf-8"))
         if value.get("state") not in TERMINAL:
             value.update(state="failed", message="该任务不再是当前执行，已停止；请核对定位后新建任务", version=value.get("version", 0) + 1)
@@ -156,6 +160,8 @@ class NavigationTaskRunner:
             previous_path = self.path.parent / "navigation-runs" / (hashlib.sha256(ident.encode()).hexdigest() + ".json")
             if previous_path.is_file():
                 previous = self.snapshot_for(ident)
+                if previous.get('state') == 'cancelled' and previous.get('task_id') == payload.get('task_id') and previous.get('kind') == payload.get('kind'):
+                    return previous
                 if previous.get("request_fingerprint") != fingerprint:
                     raise RuntimeError("同一请求标识的目标已变化，请新建任务")
                 return previous
@@ -215,7 +221,13 @@ class NavigationTaskRunner:
                     ident = payload["run_id"]
                     path = self.path.parent / "navigation-runs" / (hashlib.sha256(ident.encode()).hexdigest() + ".json")
                     if path.is_file():
-                        return self.snapshot_for(ident)
+                        previous = self.snapshot_for(ident)
+                        if previous.get('task_id') != payload.get('task_id') or previous.get('kind') != payload.get('kind'):
+                            raise RuntimeError('取消请求与执行记录不匹配')
+                        if previous['state'] not in {'completed', 'cancelled'}:
+                            previous.update(state='cancelled', message='旧请求已取消', version=previous.get('version',0)+1)
+                            _write_record(path, previous)
+                        return previous
                     if not payload.get("task_id") or payload.get("kind") not in {"delivery", "patrol"}:
                         raise ValueError("取消未派发任务需要业务任务标识")
                     tombstone = {"run_id": ident, "task_id": payload["task_id"], "kind": payload["kind"], "state": "cancelled",
@@ -223,6 +235,8 @@ class NavigationTaskRunner:
                     _write_record(path, tombstone)
                     return tombstone
                 raise ValueError("执行任务已变化，请刷新页面")
+            if payload.get('task_id') not in (None, state.get('task_id')) or payload.get('kind') not in (None, state.get('kind')):
+                raise RuntimeError('取消或操作请求与执行记录不匹配')
             action = payload.get("action")
             if action == "cancel":
                 if state["state"] not in TERMINAL:

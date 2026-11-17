@@ -16,6 +16,7 @@ from ...services.tasks import serialize_mission, serialize_patrol
 from ..deps import get_db, require_permission
 from ...services.robot_context import vehicle_binding
 from ...services.navigation_execution import execution, store_execution
+from ...services.task_sync import refresh_execution, STATES
 from ...services.control_leases import control_lease_manager
 from ...services.diagnostics import emit as diagnostic_emit
 
@@ -60,6 +61,34 @@ async def _call(db, path, payload=None, query=None, *, gateway=None):
         raise _error(409 if exc.response.status_code < 500 else 502, message) from exc
     except (httpx.HTTPError, RuntimeError, ValueError) as exc:
         raise _error(502, f"未能确认车端执行状态，请刷新核对：{exc}") from exc
+
+
+async def dispatch_saved(db, item, request):
+    db.refresh(item)
+    current = execution(item)
+    if current and (current.get('sync_state') == 'cancel_pending' or current['state'] in {'completed','cancelled','failed'}):
+        return current
+    if current and current.get('request_fingerprint') and hashlib.sha256(json.dumps(request,sort_keys=True,allow_nan=False).encode()).hexdigest() != current['request_fingerprint']:
+        raise _error(409, '原请求校验失败，禁止派发；请核对或取消旧请求')
+    try:
+        result = await _call(db, 'task', request)
+        if (not isinstance(result,dict) or result.get('run_id') != request['run_id']
+                or result.get('task_id') != item.id or result.get('kind',request['kind']) != request['kind']
+                or result.get('state') not in STATES):
+            store_execution(db,item,{**execution(item),'sync_state':'record_mismatch','poll_required':False,
+                                     'message':'车端创建回执不匹配，禁止重试派发；请核对并取消旧请求'})
+            db.commit()
+            return execution(item)
+        return result
+    except HTTPException as exc:
+        value = execution(item)
+        if value.get('sync_state') == 'cancel_pending' or value['state'] in {'completed','cancelled','failed'}:
+            return value
+        message = exc.detail.get('message',str(exc.detail)) if isinstance(exc.detail,dict) else str(exc.detail)
+        value = {**value, 'sync_state':'unreachable' if exc.status_code>=500 else 'dispatch_rejected',
+                 'message':message,'poll_required':exc.status_code>=500}
+        store_execution(db,item,value);db.commit()
+        return execution(item)
 
 
 @router.post("")
@@ -108,7 +137,9 @@ async def create_execution(payload: dict = Body(...), db: Session = Depends(get_
     except (ValueError, TypeError) as exc:
         raise _error(422, "执行请求包含无效参数") from exc
     if previous and previous.get("request_fingerprint") not in {None, fingerprint}:
-        raise _error(409, "原请求已保存，不能在重试时更换坐标；请新建任务")
+        raise _error(409, "请求内容与已保存原请求不同；请重试原请求，或确认取消旧任务后重新创建")
+    if previous and (previous['state'] in {'completed','cancelled','failed'} or previous.get('sync_state') in {'cancel_pending','record_mismatch','query_rejected'}):
+        return previous
     if not previous:
         if item.status not in {"queued", "pending"}:
             raise _error(409, "此业务任务当前不能派发")
@@ -118,7 +149,7 @@ async def create_execution(payload: dict = Body(...), db: Session = Depends(get_
         db.commit()
         diagnostic_emit('task.changed', 'dispatch_prepared', module='navigation_tasks',
                         robot_id=item.robot_id, task_id=task_id, run_id=run_id)
-    result = await _call(db, "task", wire_payload)
+    result = await dispatch_saved(db, item, wire_payload)
     if result.get("run_id") != run_id or result.get("task_id") != task_id:
         raise _error(502, "车端任务标识不一致，尚未确认派发")
     store_execution(db, item, result)
@@ -136,13 +167,11 @@ async def get_execution(kind: str, task_id: str, db: Session = Depends(get_db),
     if not previous:
         return {"state": "idle", "message": "此任务尚未配置地图目标"}
     _check_binding(db, item.robot_id)
-    result = await _call(db, "task", query={"run_id": previous["run_id"]})
-    if result.get("run_id") != previous["run_id"] or result.get("task_id") != item.id:
-        raise _error(502, "车端执行记录不匹配")
-    store_execution(db, item, result)
-    db.commit()
-    await control_lease_manager.observe_run(execution(item))
-    return execution(item)
+    binding = vehicle_binding(db)
+    result = await refresh_execution(db, item, _gateway(db), binding_guard=lambda:vehicle_binding(db)==binding)
+    await control_lease_manager.observe_run(result)
+    return result
+
 
 
 async def apply_execution_action(kind, task_id, payload, db, user, *, guard=None):
@@ -155,10 +184,22 @@ async def apply_execution_action(kind, task_id, payload, db, user, *, guard=None
     if guard:
         guard()
     action = payload.get("action")
-    if action == "retry" and previous["state"] == "unconfirmed" and previous.get("request"):
-        result = await _call(db, "task", previous["request"])
+    if action == 'retry':
+        if previous['state'] != 'unconfirmed' or not previous.get('request') or previous.get('sync_state') in {'cancel_pending','record_mismatch'}:
+            raise _error(409, '当前状态不能重试派发，请核对并取消旧请求')
+        binding = vehicle_binding(db)
+        checked = await refresh_execution(db,item,_gateway(db),force=True,binding_guard=lambda:vehicle_binding(db)==binding)
+        if checked['state'] != 'unconfirmed' or checked.get('sync_state') != 'record_missing':
+            return checked
+        result = await dispatch_saved(db,item,checked['request'])
     else:
+        if action == 'cancel' and previous['state'] not in {'completed','cancelled','failed'}:
+            store_execution(db,item,{**previous,'sync_state':'cancel_pending','poll_required':False,
+                                     'message':'正在取消旧请求；车端确认前不能更换目标'})
+            db.commit()
         wire = {"run_id": previous["run_id"], "task_id": task_id, "kind": kind, "action": action}
+        if action != 'cancel' and previous.get('sync_state') in {'cancel_pending','record_missing','record_mismatch','query_rejected','unreachable'}:
+            raise _error(409, '车端执行状态未核实，请先核对或取消旧请求')
         lease = None
         motion_phases = {"loaded": "waiting_load", "start": "prepared", "resume": "paused"}
         if action in motion_phases and previous["state"] != motion_phases[action]:

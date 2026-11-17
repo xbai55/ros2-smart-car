@@ -20,6 +20,9 @@ controller_server:
       yaw_goal_tolerance: 0.20
     FollowPath:
       plugin: dwb_core::DWBLocalPlanner
+      # RotateToGoal latches translation off inside this window. Keep it
+      # inside the 0.15 m Goal Checker window, with 3 cm drift margin.
+      xy_goal_tolerance: 0.12
       max_vel_x: 0.18
       max_speed_xy: 0.18
       max_vel_theta: 0.75

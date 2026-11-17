@@ -134,7 +134,7 @@ export function normalizeRobotStatus(snapshot: Partial<RobotStatus>): RobotStatu
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 export type NavigationRuntimeState = { state: string; message: string; map_id: string | null; digest: string | null; localized: boolean; pose_at?: number | null; control_session_id?: string };
-export type NavigationTaskState = { state: string; message: string; run_id?: string; task_id?: string; kind?: "delivery" | "patrol"; goals?: Pose[]; completed_stops?: number; index?: number; returning?: boolean; return_to_start?: boolean; updated_at?: number; version?: number; total_stops?: number; cycles?: number; distance_m?: number; elapsed_sec?: number; dwell_remaining_sec?: number; acceptance_met?: boolean };
+export type NavigationTaskState = { sync_state?: string; poll_required?: boolean; next_poll_at?: number; state: string; message: string; run_id?: string; task_id?: string; kind?: "delivery" | "patrol"; goals?: Pose[]; completed_stops?: number; index?: number; returning?: boolean; return_to_start?: boolean; updated_at?: number; version?: number; total_stops?: number; cycles?: number; distance_m?: number; elapsed_sec?: number; dwell_remaining_sec?: number; acceptance_met?: boolean };
 async function readJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let message = `请求失败 (${response.status})`;

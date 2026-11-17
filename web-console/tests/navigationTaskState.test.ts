@@ -11,3 +11,13 @@ test("a delayed previous run cannot replace a newly created run", () => {
   const next = { run_id: "new", state: "waiting_load", message: "load", version: 1, updated_at: 60 };
   assert.equal(acceptTaskState(next, { run_id: "old", state: "completed", message: "done", version: 10, updated_at: 50 }), next);
 });
+
+test("an idle vehicle cannot erase a locally saved unconfirmed request", () => {
+  const pending={run_id:'saved',state:'unconfirmed',message:'saved',sync_state:'record_missing'};
+  assert.equal(acceptTaskState(pending,{state:'idle',message:'none'}),pending);
+});
+
+test("a terminal task cannot be resurrected by a higher version late reply", () => {
+  const cancelled={run_id:'old',state:'cancelled',message:'cancelled',version:2};
+  assert.equal(acceptTaskState(cancelled,{run_id:'old',state:'prepared',message:'late',version:9}),cancelled);
+});
