@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 
 from ..models import Incident, SafetyCoverage
 from .ops import json_loads
+from .fall_review import alert_clause
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 DETAIL_LIMIT = 200
@@ -64,7 +65,7 @@ def _coverage(db, robot_id, start, end, now):
 def incident_report(db, robot_id, start_date=None, end_date=None, *, now=None):
     now = now or datetime.now(timezone.utc)
     start, end = report_window(start_date, end_date, now=now)
-    window = (Incident.occurred_at >= start, Incident.occurred_at < end)
+    window = (Incident.occurred_at >= start, Incident.occurred_at < end, alert_clause())
     grouped = db.execute(select(Incident.type, Incident.status, func.count()).where(
         *window
     ).group_by(Incident.type, Incident.status)).all()
@@ -89,7 +90,7 @@ def incident_report(db, robot_id, start_date=None, end_date=None, *, now=None):
             "evidence_path": "/incidents/" + quote(row.id, safe=""),
         })
     missing_time = db.scalar(select(func.count()).select_from(Incident).where(
-        Incident.occurred_at.is_(None), Incident.created_at >= start, Incident.created_at < end))
+        Incident.occurred_at.is_(None), Incident.created_at >= start, Incident.created_at < end, alert_clause()))
     total = sum(by_type.values())
     return {"timezone": "Asia/Shanghai", "start": start.astimezone(SHANGHAI).isoformat(),
             "end": end.astimezone(SHANGHAI).isoformat(), "generated_at": now.isoformat(),

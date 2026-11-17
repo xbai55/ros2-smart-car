@@ -96,7 +96,7 @@ async def validate_steps(db, user, robot_id, steps, *, trial_plan=None, trial_ex
         current = capabilities[step["action"]]
         if not current["executable"]:
             if trial_plan is None or not current["supported"] or not current["ready"]:
-                raise HTTPException(409, "车辆能力未就绪或当前版本缺少实车验收")
+                raise HTTPException(409, "车辆能力尚未就绪，请检查实时状态")
             from .assistant_trials import require_trial
             require_trial(db, user, trial_plan, step["action"], current["fingerprint"], trial_execution)
         if current["fingerprint"] != step["capability"]["fingerprint"]:

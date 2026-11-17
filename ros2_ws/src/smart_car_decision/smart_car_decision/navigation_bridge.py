@@ -1,3 +1,4 @@
+from .service_budgets import ACTION_WAIT, NAVIGATION_START_WAIT
 """Nav2 action adapter. ROS callbacks spin independently of the HTTP loop."""
 import asyncio
 import copy
@@ -15,7 +16,7 @@ from action_msgs.msg import GoalStatus
 from .navigation_config import drawing_identity, finite_number, map_key, validate_map_goal
 
 
-async def wait_future(future, timeout=8):
+async def wait_future(future, timeout=ACTION_WAIT):
     end = time.monotonic() + timeout
     while not future.done():
         if time.monotonic() >= end:
@@ -81,6 +82,13 @@ class NavigationBridge:
         state["ready"] = not error
         if error and state["state"] not in {"running", "starting", "failed"}:
             state["message"] = error
+        service=getattr(self.node,'avoidance_service',None)
+        if service is not None and state['state'] in {'starting','running'}:
+            reasons=service.snapshot().get('output',{}).get('reasons',[])
+            if 'navigation_waiting_command' in reasons:
+                state.update(message='等待本轮导航的首条速度指令，小车保持停车',
+                             start_phase='waiting_command',elapsed_sec=max(0.,time.monotonic()-self.started_at),
+                             startup_budget_sec=NAVIGATION_START_WAIT)
         return state
 
     def _pose(self, goal, frame):
@@ -94,6 +102,7 @@ class NavigationBridge:
         return value
 
     async def plan(self, payload, *, preview_epoch=None):
+        deadline=time.monotonic()+ACTION_WAIT
         with self.lock:
             error = self._health()
             if error:
@@ -116,7 +125,7 @@ class NavigationBridge:
         request.use_start = False
         future = self.planner.send_goal_async(request)
         try:
-            handle = await wait_future(future)
+            handle = await wait_future(future, max(0.,deadline-time.monotonic()))
         except BaseException:
             def cancel_late(f):
                 try:
@@ -130,7 +139,7 @@ class NavigationBridge:
         if not handle.accepted:
             raise RuntimeError("规划服务拒绝了目标")
         try:
-            result = await wait_future(handle.get_result_async())
+            result = await wait_future(handle.get_result_async(),max(0.,deadline-time.monotonic()))
         except BaseException:
             handle.cancel_goal_async()
             raise
@@ -153,9 +162,10 @@ class NavigationBridge:
         return plan
 
     async def start(self, payload, guard=None):
+        deadline=time.monotonic()+ACTION_WAIT
         while self.cancel_future is not None:
             pending = self.cancel_future
-            await wait_future(pending)
+            await wait_future(pending,max(0.,deadline-time.monotonic()))
             if self.cancel_future is pending:
                 self.cancel_future = None
         with self.lock:
@@ -204,7 +214,7 @@ class NavigationBridge:
             request.pose = self._pose(plan["goal"], snapshot.get("header", {}).get("frame_id") or "map")
             future = self.navigator.send_goal_async(request, feedback_callback=lambda f: self.feedback(f, epoch))
             future.add_done_callback(clean_late)
-            handle = await wait_future(future)
+            handle = await wait_future(future,max(0.,deadline-time.monotonic()))
             if not handle.accepted:
                 raise RuntimeError("小车拒绝了导航目标")
             with self.lock:
@@ -222,7 +232,7 @@ class NavigationBridge:
                         self.handle.cancel_goal_async()
                     self.handle = None
                     self.state.update(state="failed", message=str(exc))
-                    self.node.set_mode("stop")
+                    self._stop_owned_mode()
             raise
         return {"ok": True, "goal_id": plan["plan_id"]}
 
@@ -253,14 +263,28 @@ class NavigationBridge:
             except Exception as exc:
                 self.state.update(state="failed", message=f"导航结果异常：{exc}")
             self.handle = None
-            self.node.set_mode("stop")
+            self._stop_owned_mode()
+
+    def _stop_owned_mode(self):
+        # Late task failures/results may cancel their goal, never a new driver's
+        # mode. The controller's revoked lease independently guarantees zero.
+        if self.node.store.snapshot().get('mode') != 'navigation':
+            return
+        identity = self.state.get('control_lease')
+        live = getattr(self.node, 'control_lease_ack', {})
+        if identity is not None and any(identity.get(k) != live.get(k) for k in ('controller_id', 'control_epoch', 'owner')):
+            # A revoked task may leave navigation mode only when nobody replaced it.
+            orphaned=(live.get('controller_id')==identity.get('controller_id') and live.get('owner') is None
+                      and live.get('reason') in {'safety_intervention','control_lease_expired'})
+            if not orphaned:return
+        self.node.set_mode('stop')
 
     def cancel(self, message="导航已停止", failed=False):
         with self.lock:
             self.epoch += 1
             handle, self.handle = self.handle, None
             self.state.update(state="failed" if failed else "canceled", message=message)
-            self.node.set_mode("stop")
+            self._stop_owned_mode()
             if handle:
                 self.cancel_future = handle.cancel_goal_async()
         return {"ok": True, "message": message}
@@ -273,7 +297,11 @@ class NavigationBridge:
             if identity is not None:
                 from .lease_bridge import LeaseBridge
                 if not LeaseBridge(self.node).accepts(identity):
-                    self.cancel("控制租约已失效，独立导航已停止", failed=True)
+                    service=getattr(self.node,'avoidance_service',None)
+                    reason=service.snapshot().get('interruption_reason') if service else None
+                    message={'navigation_start_timeout':'等待首条导航指令超时，已停车，请检查规划与控制服务',
+                             'navigation_command_timeout':'导航速度指令中断，已停车，需重新预览后启动'}.get(reason,'控制租约已失效，独立导航已停止')
+                    self.cancel(message, failed=True)
                     return
             error = self._health()
             if error:

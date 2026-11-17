@@ -63,13 +63,13 @@ export function VisionSearchPanel() {
       {search&&['found','paused'].includes(search.state)&&<button disabled={busy||!online||!resumeCapability?.executable||vision?.state!=='running'} onClick={()=>void act('continue')}>继续搜索</button>}
       {active&&<button disabled={busy||!online} onClick={()=>void act('cancel')}>结束并停车</button>}</div>
     <p role="status">{search?.message??vision?.message??'等待车端状态'}</p>
-    {capability && !capability.executable && <p>{capability.reasons.includes('vehicle_acceptance_required') ? '当前搜索方式缺少该版本的实车验收' : '当前搜索方式尚未就绪'}</p>}
+    {capability && !capability.executable && <p>{'当前搜索方式尚未就绪，请检查实时状态'}</p>}
     {search?.evidence&&<p>{search.evidence.save_error?'已停车，但证据保存失败':'已保存目标画面及车辆位置'}</p>}
-    <details><summary>杂物识别设置</summary><label><input type="checkbox" checked={settings?.clutter_enabled??false} disabled={!online||!settings||active||status.mode!=='stop'||busy} onChange={e=>{setBusy(true);void api.setVisionSettings({clutter_enabled:e.target.checked}).then(setSettings).catch(e=>setError(e.message)).finally(()=>setBusy(false));}}/>标注并报警</label>
+    <details><summary>普通物品标注设置</summary><label><input type="checkbox" checked={settings?.clutter_enabled??false} disabled={!online||!settings||active||status.mode!=='stop'||busy} onChange={e=>{setBusy(true);void api.setVisionSettings({clutter_enabled:e.target.checked}).then(setSettings).catch(e=>setError(e.message)).finally(()=>setBusy(false));}}/>仅在画面中标注，不生成异常提醒</label>
       <label>英文类别，以逗号分隔<input value={clutter} disabled={active||busy||status.mode!=='stop'} onChange={e=>setClutter(e.target.value)}/></label>
       <button disabled={!settings||!online||active||busy||status.mode!=='stop'} onClick={()=>{setBusy(true);void api.setVisionSettings({clutter_prompts:clutter.split(',').map(v=>v.trim()).filter(Boolean)}).then(setSettings).catch(e=>setError(e.message)).finally(()=>setBusy(false));}}>保存类别</button></details>
     {vision?.detections.map((v,i)=><p key={i}>{v.label} · {(v.confidence*100).toFixed(0)}% {v.passage??''}</p>)}
-    <p className="setting-note">确认目标后在当前位置停车；不自动靠近。杂物报警不替代雷达防撞。</p>
+    <p className="setting-note">确认搜索目标后在当前位置停车，不自动靠近。普通物品只标框；通道异常需要通道区域证据，雷达避障独立运行。</p>
     {error&&<p role="alert">{error}</p>}
   </section>;
 }

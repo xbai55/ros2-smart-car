@@ -161,7 +161,7 @@ def test_out_of_order_manual_packet_cannot_restart_motion_after_release(controll
     c.on_mode(NS(data="manual"))
 
     def drive(command, seq):
-        c.on_manual_command(NS(data=json.dumps({**identity, "command": command, "drive_seq": seq})))
+        c.on_manual_command(NS(data=json.dumps({**identity, "command": command, "drive_seq": seq, "intent_seq": 1 if seq <= 3 else 2, "motion_epoch": lease.motion_epoch, "command_deadline": 100.7})))
         c.control_loop()
         return c.output[-1].linear.x
 
@@ -176,6 +176,7 @@ def test_out_of_order_manual_packet_cannot_restart_motion_after_release(controll
 
 def test_exact_scan_transform_failure_and_stamp_reject_motion(controller):
     c = controller
+    c.avoidance.settings['protection_mode'] = 'full'
     calls = []
     def transform(parent, child, stamp):
         calls.append((parent, child, stamp.nanoseconds))
@@ -197,6 +198,7 @@ def test_exact_scan_transform_failure_and_stamp_reject_motion(controller):
 
 def test_future_tf_retries_exact_scan_without_renewing_old_evidence(controller):
     c=controller;c.publish_rate_hz=20.
+    c.avoidance.settings['protection_mode'] = 'full'
     scan=NS(angle_min=0.,angle_increment=.01,range_min=.01,range_max=12.,ranges=[3.]*629,
             header=NS(frame_id='laser',stamp=NS(sec=100,nanosec=0)))
     error=c.on_scan.__globals__['ExtrapolationException']

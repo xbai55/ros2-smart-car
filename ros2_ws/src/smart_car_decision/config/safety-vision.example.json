@@ -7,7 +7,7 @@
   "models": [{
     "path": "models/yolo11-fall.pt",
     "class_map": {"fallen": "fallen_person"},
-    "confidence": 0.25,
+    "confidence": 0.50,
     "sha256": "3f56ad30358d5c63bf8dbc0c1299cf68818c3d291dfb10c94107b94110aadd4c",
     "validation": "not_evaluated"
   }],

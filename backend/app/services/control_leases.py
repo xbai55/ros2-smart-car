@@ -26,6 +26,9 @@ class HeldLease:
     purpose: str = "navigation"
     drive_sequence: int = 0
     forward_limit_mps: float | None = None
+    motion_epoch: str | None = None
+    command_valid_until: float | None = None
+    client_id: str | None = None
 
     def identity(self):
         return {"controller_id": self.controller_id, "control_epoch": self.control_epoch, "owner": self.owner}
@@ -57,6 +60,8 @@ class ControlLeaseManager:
             if generation != self.generation or not self.matches(result, lease):
                 await self.stop_remote(lease)
                 raise RuntimeError("控制器未确认租约或停止已发生")
+            lease.motion_epoch = (result.get("lease") or {}).get("motion_epoch")
+            lease.command_valid_until = (result.get("lease") or {}).get("command_valid_until")
             self.current = lease
             diagnostic_emit('lease.changed', 'control_lease_acquired', module='control_leases',
                             details={'lease_purpose': purpose})

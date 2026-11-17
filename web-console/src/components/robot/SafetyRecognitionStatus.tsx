@@ -8,6 +8,7 @@ export function SafetyRecognitionStatus() {
   useEffect(() => { const timer = setInterval(health.refetch, 5000); return () => clearInterval(timer); }, [health.refetch]);
   return <Panel title="巡检识别状态"><p role="status">{health.data?.message || health.error || '正在读取车端识别状态…'}</p>
     {health.data?.ingest && <p>{health.data.ingest.message}</p>}
+    {health.data?.fall_review_enabled && <p>烟火与人员倒地候选启用 DS 单张原图复核；结果仍需人工核实。</p>}
     {health.data?.models?.map(m => <p key={m.path}>{m.path} · {m.validation === 'not_evaluated' ? '尚未完成场景验证' : m.validation}</p>)}
     {health.data?.capabilities && <p>烟火模型：{health.data.capabilities.smoke_fire ? '已加载' : '未配置'}；倒地模型：{health.data.capabilities.fallen_person ? '已加载' : '未配置'}；通道检查截面：{health.data.configured_corridors || 0}个</p>}
     <small>专项模型未配置、摄像头或定位不可用时，不能据此判断现场没有异常。报警后继续巡航，避障和急停独立生效。</small></Panel>;
@@ -30,6 +31,14 @@ export function IncidentEvidence({ item }: { item: BusinessIncident }) {
     return () => { active = false; if (url) URL.revokeObjectURL(url); };
   }, [key]);
   return <Panel title="现场证据">{image ? <img src={image} alt="异常发生时保存的现场画面" style={{maxWidth: '100%', maxHeight: 600, objectFit: 'contain'}}/> : <EmptyState title={error ? '现场图片读取失败' : key ? '正在读取现场图片…' : '此记录未保存现场图片'} hint={error || '历史证据与实时摄像头画面分别保存。'}/>}
+    {item.review && <div className="profile-list">
+      <div><em>本地检测</em><strong>{typeof item.evidence?.confidence === 'number' ? `分数 ${item.evidence.confidence.toFixed(2)}，已通过持续确认` : '倒地候选'}</strong></div>
+      <div><em>DS 复核</em><strong>{{pending:'等待复核',running:'正在复核',supported:'支持疑似倒地',rejected:'不支持倒地',uncertain:'证据不足，未告警',failed:'复核未完成，未告警',suppressed:'低于阈值，未告警'}[item.review.state] || item.review.state}</strong></div>
+      {typeof item.review.result.score === 'number' && <div><em>DS 判断分数</em><strong>{item.review.result.score.toFixed(2)}{typeof item.review.result.threshold === 'number' ? ` / 阈值 ${item.review.result.threshold.toFixed(2)}` : ''}</strong></div>}
+      <div><em>观察依据</em><strong>{item.review.result.reason || item.review.error || '结果尚未返回'}</strong></div>
+      {item.review.model && <div><em>复核模型</em><strong>{item.review.model}</strong></div>}
+      <p>复核仅使用事件发生时的一张原图。单图不能证明发生了意外跌倒，人工处理状态单独记录。</p>
+    </div>}
     {item.type === 'blocked_passage' && <p>图片为同期摄像头视角，相机与雷达视野对应关系尚未现场验证。通道判断以保存的雷达点和检查区域为依据。</p>}
     {coords.length > 1 && <svg role="img" aria-label="报警时的雷达点与通道检查区域" viewBox={`${minX-.2} ${-maxY-.2} ${Math.max(.5,maxX-minX+.4)} ${Math.max(.5,maxY-minY+.4)}`} style={{width:'100%',height:240,background:'#f4f6f9'}}>
       <polygon points={polygon.map(([x,y]) => `${x},${-y}`).join(' ')} fill="#2563eb22" stroke="#2563eb" strokeWidth={.025}/>

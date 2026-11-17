@@ -215,3 +215,12 @@ def test_invalidated_registration_blocks_cached_preview_and_planning(bridge):
     with pytest.raises(RuntimeError, match="对齐"):
         preview(bridge)
     assert bridge.node.mode_commands == []
+
+
+def test_revoked_navigation_can_leave_orphan_mode_but_not_new_owner(bridge):
+    b=bridge;b.node.store.update(mode='navigation')
+    b.state['control_lease']={'controller_id':'c','control_epoch':'old','owner':'old'}
+    b.node.control_lease_ack={'controller_id':'c','control_epoch':'revoked','owner':None,'reason':'safety_intervention'}
+    b._stop_owned_mode();assert b.node.mode_commands[-1]=='stop'
+    b.node.mode_commands.clear();b.node.control_lease_ack.update(owner='new',control_epoch='new')
+    b._stop_owned_mode();assert b.node.mode_commands==[]

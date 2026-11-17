@@ -8,7 +8,7 @@ test("manual commands and key release use the same driving identity with increas
   const api = createRobotApi(async (_url, init) => {
     const body = JSON.parse(String(init?.body));
     bodies.push(body);
-    return Response.json(body.mode === "manual" ? { ok: true, drive_id: "drive" } : { ok: true });
+    return Response.json(body.mode === "manual" ? { ok: true, drive_id: "drive", motion_epoch: "m", command_valid_until: 1234 } : { ok: true });
   });
   await assert.rejects(api.sendCommand("forward"), /请先选择/);
   await api.setMode("manual");
@@ -17,8 +17,10 @@ test("manual commands and key release use the same driving identity with increas
   await api.sendCommand("turn_l");
   await api.setMode("stop");
   await assert.rejects(api.sendCommand("forward"), /请先选择/);
+  const clientId = (bodies[0] as {client_id: string}).client_id;
+  assert.equal(typeof clientId, "string");
   assert.deepEqual(bodies, [
-    { mode: "manual" }, { command: "forward", drive_id: "drive", drive_seq: 1 },
+    { mode: "manual", client_id: clientId }, { command: "forward", drive_id: "drive", drive_seq: 1 },
     { command: "stop", drive_id: "drive", drive_seq: 2 }, { command: "turn_l", drive_id: "drive", drive_seq: 3 },
     { mode: "stop" },
   ]);
@@ -51,7 +53,8 @@ test("robot API posts real mode and speed payloads", async () => {
   await api.setSpeed(0.35);
 
   assert.equal(calls[0].url, "/api/mode");
-  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), { mode: "manual" });
+  assert.equal(JSON.parse(String(calls[0].init?.body)).mode, "manual");
+  assert.equal(typeof JSON.parse(String(calls[0].init?.body)).client_id, "string");
   assert.equal(calls[1].url, "/api/speed");
   assert.deepEqual(JSON.parse(String(calls[1].init?.body)), { scale: 0.35 });
 });

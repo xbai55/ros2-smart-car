@@ -66,6 +66,7 @@ class Rectangle:
                 if distance>=-1e-8 and ref.clearance(p)>=-1e-8 and distance+1e-8>=ref.clearance(p):
                     continue
             return {'kind':'obstacle','point':list(p),'clearance_m':distance}
+        if getattr(evidence, 'distance_only', False):return None
         if not evidence.full:return {'kind':'unknown','reason':'cropped_scan'}
         extra=(math.hypot(*pose[:2])+self.radius+margin+math.hypot(*evidence.origin))*abs(math.sin(evidence.step))
         visible_bound=math.dist(pose[:2],evidence.origin)+self.radius+(margin+extra)*math.sqrt(2)+.01

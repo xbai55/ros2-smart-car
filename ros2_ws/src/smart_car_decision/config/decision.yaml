@@ -27,7 +27,7 @@ decision_controller:
     scan_timeout_sec: 0.6
     publish_rate_hz: 20.0
     avoidance_motion_model: holonomic
-    avoidance_assume_missing_clear: true
+    avoidance_assume_missing_clear: false
 
 laser_obstacle_monitor:
   ros__parameters:

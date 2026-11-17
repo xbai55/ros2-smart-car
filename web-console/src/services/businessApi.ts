@@ -1,8 +1,10 @@
+export type SafetyThresholds = Record<'smoke_fire' | 'fallen_person', {candidate: number; review: number}>;
 export type BusinessUser = { id: string; username: string; display_name: string; role: { name: string; permissions: Array<{ name: string }> } | null };
 export type SafetyCorridor = { id: string; name: string; map_key: string; polygon: number[][]; axis_yaw: number; required_free_width_m: number };
 export type BusinessSession = { access_token: string; refresh_token: string; user: BusinessUser };
 export type ManagedMap = { id: string; name: string; floor: string; description: string; width: number; height: number; resolution?: number; origin?: number[]; active: boolean; image_url: string | null; image_key?: string | null; created_at: string; updated_at: string | null; metadata: Record<string, unknown> };
 export type SlamMapDraft = { request_id: string; name: string; floor: string; description: string };
+export type MapPreparation = { elapsed_sec?:number; budget_sec?:number; id: string; state: string; phase: string; message: string; map_id: string | null };
 export type MapEdit = { type: "despeckle"; max_cells: number } | { type: "wall"; start: { x: number; y: number }; end: { x: number; y: number }; width_m: number }
   | { type: "paint" | "keepout" | "candidate"; shape: "brush" | "line" | "rectangle" | "cells"; points: {x:number;y:number}[]; value: -1|0|100; width_m?:number; filled?:boolean; max_cells?:number };
 export type MapPreview = { preview_url:string; changed_cells:number; changed_area_m2:number; digest:string; diff_url:string; keepout_url:string|null; effective_keepout_url:string|null; radius_m:number };
@@ -18,7 +20,8 @@ export function createMapRequestId() {
 export type MapPlace = { id: string; map_id: string; name: string; x: number; y: number; yaw: number };
 export type PlaceInput = Pick<MapPlace, "name" | "x" | "y" | "yaw">;
 export type ManagedRoute = { id: string; name: string; map_id: string | null; waypoints: unknown[]; points: unknown[]; created_at?: string; updated_at?: string | null };
-export type BusinessIncident = { id: string; title: string; type: string; severity: string; status: string; description: string; location: string; robot_id: string | null; occurred_at: string | null; created_at: string | null; handled_at: string | null; resolved_at: string | null; handle_result: string; resolution_note: string; image_url: string | null; media_keys?: string[]; evidence?: Record<string, unknown> };
+export type FallReview = { state: string; model: string; result: { person?: string; posture?: string; verdict?: string; reason?: string; score?: number; threshold?: number }; error: string; elapsed_ms: number | null };
+export type BusinessIncident = { id: string; title: string; type: string; severity: string; status: string; description: string; location: string; robot_id: string | null; occurred_at: string | null; created_at: string | null; handled_at: string | null; resolved_at: string | null; handle_result: string; resolution_note: string; image_url: string | null; media_keys?: string[]; evidence?: Record<string, unknown>; review?: FallReview | null };
 export type ManagedRobot = { id: string; name: string; robot_code: string; status: string };
 export type TaskInput = { name: string; description: string; robot_id: string | null; map_id: string | null; route_id: string | null };
 export type PatrolTaskInput = TaskInput & { target_area: string; priority: "low" | "normal" | "high" | "urgent" };
@@ -267,6 +270,10 @@ export const businessApi = {
   },
   listMaps: () => json<ManagedMap[]>("/maps"),
   saveSlamMap: (data: SlamMapDraft & { robot_id: string }) => json<ManagedMap>("/maps/slam", jsonOptions("POST", data)),
+  finishMapForTasks: (data: SlamMapDraft & { robot_id: string; session_id: string }) => json<MapPreparation>('/maps/slam/finish-for-tasks', jsonOptions('POST', data)),
+  getMapPreparation: (id: string) => json<MapPreparation>(`/maps/slam/preparations/${encodeURIComponent(id)}`),
+  retryMapPreparation: (id:string) => json<MapPreparation>(`/maps/slam/preparations/${encodeURIComponent(id)}/retry`, jsonOptions('POST', {})),
+  cancelMapPreparation: (id: string) => json<MapPreparation>(`/maps/slam/preparations/${encodeURIComponent(id)}/cancel`, jsonOptions('POST', {})),
   getMapSelection: () => json<{ map_id: string | null; initialized?: boolean }>("/maps/selection"),
   selectMap: (id: string) => json<{ map_id: string }>(`${mapPath(id)}/select`, jsonOptions("POST", {})),
   async clearMapSelection() { await request("/maps/selection", { method: "DELETE" }); },
@@ -295,11 +302,13 @@ export const businessApi = {
   async deletePlace(id: string, placeId: string) { await request(`${mapPath(id)}/places/${encodeURIComponent(placeId)}`, { method: "DELETE" }); },
   listRoutes: (mapId?: string) => json<ManagedRoute[]>(`/routes${mapId ? `?map_id=${encodeURIComponent(mapId)}` : ""}`),
   getRoute: (id: string) => json<ManagedRoute>(`/routes/${encodeURIComponent(id)}`),
-  listIncidents: () => json<BusinessIncident[]>("/incidents"),
+  listIncidents: (scope: 'alerts' | 'candidates' | 'all' = 'alerts') => json<BusinessIncident[]>(`/incidents?review_scope=${scope}`),
   getIncident: (id: string) => json<BusinessIncident>(`/incidents/${encodeURIComponent(id)}`),
   incidentAction: (id: string, action: string, note = "") => json<BusinessIncident>(`/incidents/${encodeURIComponent(id)}/actions`, jsonOptions("POST", { action, note })),
   async incidentImage(key: string) { return (await request(`/media/object/${key.split('/').map(encodeURIComponent).join('/')}`)).blob(); },
-  safetyStatus: () => json<{state: string; message: string; capabilities?: Record<string, boolean>; configured_corridors?: number; models?: Array<{path: string; validation: string}>; inference_ms?: number; ingest?: {state: string; message: string}}>("/incidents/safety/status"),
+    safetyThresholds: () => json<SafetyThresholds>('/incidents/safety/thresholds'),
+    setSafetyThresholds: (value: SafetyThresholds) => json<SafetyThresholds>('/incidents/safety/thresholds', {method:'PUT', body:JSON.stringify(value)}),
+    safetyStatus: () => json<{state: string; message: string; fall_review_enabled?: boolean; capabilities?: Record<string, boolean>; configured_corridors?: number; models?: Array<{path: string; validation: string}>; inference_ms?: number; ingest?: {state: string; message: string}}>("/incidents/safety/status"),
   safetyCorridors: () => json<{corridors: SafetyCorridor[]}>("/incidents/safety/corridors"),
   saveSafetyCorridors: (value: Record<string, unknown>) => json<{corridors: SafetyCorridor[]}>("/incidents/safety/corridors", jsonOptions('POST', value)),
   listPatrolTasks: () => json<BusinessTask[]>("/patrol-tasks"),
@@ -310,6 +319,7 @@ export const businessApi = {
   listUsers: () => json<AccountRecord[]>("/users"),
   listRoles: () => json<RoleRecord[]>("/roles"),
   listNotifications: () => json<NotificationRecord[]>("/notifications"),
+  markAllNotificationsRead: () => json<{updated_count:number; read_ids:string[]}>('/notifications/read-all', jsonOptions('POST', {})),
   markNotificationRead: (id: string) => json<NotificationRecord>(`/notifications/${encodeURIComponent(id)}/read`, jsonOptions("POST", { read: true })),
   listAuditLogs: () => json<AuditRecord[]>("/audit-logs"),
   analyticsSummary: () => json<{ patrol: { total: number; completed: number }; mission: { total: number; completed: number }; incident: { total: number; unresolved: number } }>("/analytics/summary"),

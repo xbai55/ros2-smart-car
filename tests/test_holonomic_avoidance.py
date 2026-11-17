@@ -4,9 +4,16 @@ from smart_car_decision.avoidance import AvoidanceController,ZERO
 from smart_car_decision.footprint import Rectangle
 from test_avoidance import scene,step
 
+def detour_controller(*args, **kwargs):
+    # These tests exercise the explicitly enabled planner, not product defaults.
+    value = AvoidanceController(*args, **kwargs)
+    value.settings['enabled'] = True
+    return value
+
+
 
 def controller():
-    c=AvoidanceController(motion_model='holonomic')
+    c=detour_controller(motion_model='holonomic')
     c.footprint=Rectangle(.0935,.1565,.105)
     c.settings['trigger_distance_m']=.4
     return c

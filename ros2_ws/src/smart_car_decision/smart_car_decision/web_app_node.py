@@ -56,7 +56,8 @@ class WebAppNode(Node):
         self.declare_parameter("annotated_stream_fps", 20.0)
         self.declare_parameter("static_dir", "")
         self.declare_parameter("navigation_config_path", "~/.ros/insightrover/lab-navigation.json")
-        self.declare_parameter("navigation_robot_radius", 0.25)
+        from .vehicle_geometry import BOUNDING_RADIUS_M
+        self.declare_parameter("navigation_robot_radius", BOUNDING_RADIUS_M)
         self.declare_parameter('safety_config_path', '~/.ros/insightrover/safety-vision.json')
         self.declare_parameter('safety_outbox_path', '~/.ros/insightrover/safety-events.sqlite3')
         self.declare_parameter('motion_mapping_settings_path', '~/.ros/insightrover/motion-mapping.json')
@@ -85,7 +86,8 @@ class WebAppNode(Node):
         self.mapping_restart = MappingRestartManager(self.get_logger(), self.map_snapshot,
                                                      ros_now_ns=lambda: self.get_clock().now().nanoseconds,
                                                      settings=self.motion_settings, recorder=self.mapping_recorder,
-                                                     capture_initial_inputs=self.capture_mapping_inputs)
+                                                     capture_initial_inputs=self.capture_mapping_inputs,
+                                                     on_failure=self._mapping_failed)
         self.camera_stream = None
         self._last_status_at = None
         self.stop_odometry_sample = None
@@ -222,7 +224,13 @@ class WebAppNode(Node):
 
     def on_avoidance_status(self, message):
         try:
-            self.avoidance_service.observe(json.loads(message.data))
+            value = json.loads(message.data)
+            self.avoidance_service.observe(value)
+            if value.get('protection_protocol') == 2:
+                velocity = self.avoidance_service.snapshot().get('velocity', {})
+                self.stop_velocity_sample = (time.monotonic(), {
+                    'ok': velocity.get('ok'), 'odom_age_sec': velocity.get('age_sec'),
+                    'linear_speed_xy': velocity.get('linear_speed_xy'), 'angular_speed': velocity.get('angular_speed')})
         except (ValueError, TypeError):
             pass
 
@@ -239,6 +247,9 @@ class WebAppNode(Node):
         }
         if self.navigation_tasks:
             self.navigation_tasks.observe_odometry(p.x, p.y, stamp)
+        handoff = getattr(self, 'map_handoff', None)
+        if handoff:
+            handoff.observe_odom(self.relative_odom)
 
     def on_safety_scan(self, msg):
         if self.vision_service:
@@ -393,12 +404,17 @@ class WebAppNode(Node):
         snapshot = self.store.snapshot()
         self.set_command("stop")
         self.set_speed_scale(snapshot["speed_scale"])
-        self.set_mode("mapping")
+        if self.set_mode("mapping") != 'mapping':
+            raise RuntimeError('建图模式未获安全确认，取消启动')
         turn = Float32()
         turn.data = self.motion_settings.snapshot()["turn_speed"]
         self.turn_speed_pub.publish(turn)
         self.mapping_recorder.event("initial_control_state", mode="mapping", command="stop",
                                     speed_scale=snapshot["speed_scale"], turn_speed=turn.data)
+
+    def _mapping_failed(self):
+        self.set_command('stop')
+        self.set_mode('stop')
 
     def set_color_config(self, payload):
         config = self.store.set_color_config(payload)

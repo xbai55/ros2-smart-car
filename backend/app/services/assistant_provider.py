@@ -35,7 +35,7 @@ class ChatCompletionsProvider:
         self.last_response = {}
         payload = self.payload(messages, tools)
         try:
-            async with httpx.AsyncClient(timeout=12, trust_env=False, follow_redirects=False) as client:
+            async with httpx.AsyncClient(timeout=getattr(self,'response_timeout',12), trust_env=False, follow_redirects=False) as client:
                 async with client.stream("POST", self.url, headers={"Authorization": "Bearer " + self.key},
                                          json=payload) as response:
                     response.raise_for_status()
@@ -47,7 +47,7 @@ class ChatCompletionsProvider:
         self.last_response = {}
         payload = {**self.payload(messages, tools), "stream": True}
         try:
-            async with httpx.AsyncClient(timeout=12, trust_env=False, follow_redirects=False) as client:
+            async with httpx.AsyncClient(timeout=getattr(self,'response_timeout',12), trust_env=False, follow_redirects=False) as client:
                 async with client.stream("POST", self.url, headers={"Authorization": "Bearer " + self.key},
                                          json=payload) as response:
                     response.raise_for_status()
@@ -154,3 +154,27 @@ def configured_vision_provider():
     if value.get('assistant_supports_images') == '1' or os.getenv('ASSISTANT_SUPPORTS_IMAGES') == '1':
         return configured_provider()
     raise ProviderUnavailable('未配置支持图片的模型')
+
+
+def fall_review_enabled():
+    """Enabled only after the deployment image-connectivity check succeeds."""
+    if 'FALL_REVIEW_ENABLED' in os.environ:
+        return os.environ['FALL_REVIEW_ENABLED'] == '1'
+    if profile := os.getenv(PROFILE_ENV):
+        try:
+            return read_credentials(profile).get('fall_review_enabled') == '1'
+        except CredentialError:
+            pass
+    return False
+
+
+def configured_fall_review_provider():
+    provider = configured_provider()
+    model = os.getenv('FALL_REVIEW_MODEL', '')
+    if not model and (profile := os.getenv(PROFILE_ENV)):
+        model = read_credentials(profile).get('fall_review_model', '')
+    if model:
+        provider.model = model
+    elif provider.deepseek and provider.model in {'deepseek-v4-flash', 'deepseek-v4-flash-vision-exp'}:
+        provider.model = 'deepseek-flash'
+    return provider

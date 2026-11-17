@@ -9,6 +9,8 @@ from app.api.routes.vehicle_control import authorize_vehicle_write
     ("command", {"command": "set_mode", "payload": {"mode": "auto"}}, {"robots.control"}, 422),
     ("search/start", {}, {"robots.control"}, 403),
     ("navigation/calibration", {}, {"robots.control"}, 403),
+    ("navigation/handoff-seed", {}, {"robots.control", "maps.manage"}, 409),
+    ("mapping/finish-for-tasks", {}, {"robots.control", "maps.manage"}, 409),
 ])
 def test_compatibility_control_cannot_bypass_permissions(path, payload, permissions, status):
     with pytest.raises(HTTPException) as error:

@@ -14,7 +14,8 @@ from sqlalchemy.exc import IntegrityError
 
 from ..db.session import SessionLocal
 from ..gateway.robot_gateway import RobotGateway, get_robot_gateway
-from ..models import AppSetting, Incident, Robot, User
+from ..models import AppSetting, FallReview, Incident, Robot, User
+from .assistant_provider import fall_review_enabled
 from .ops import notify_users
 from .storage import get_storage
 from .incident_reports import record_coverage
@@ -29,6 +30,12 @@ def get_vehicle_url(db):
 
 
 def ingest_event(db, robot, event, storage=None):
+    if event.get('type') == 'suspected_clutter':
+        # Compatibility with old vehicle queues: acknowledge without creating
+        # a new incident, saving media or sending a notification.
+        UUID(event['event_id'])
+        pipeline_status['suppressed_observations'] = pipeline_status.get('suppressed_observations', 0) + 1
+        return None
     event_id = str(UUID(event['event_id']))
     ident = str(uuid5(NAMESPACE_URL, f'safety:{robot.id}:{event_id}'))
     existing = db.get(Incident, ident)
@@ -49,6 +56,12 @@ def ingest_event(db, robot, event, storage=None):
         if image.format != 'JPEG' or image.width * image.height > 16_000_000:
             raise ValueError('现场图片须为有效 JPEG')
         image.verify()
+    if category in {'smoke_fire','fallen_person'}:
+        from .safety_alert_settings import read_thresholds
+        score=(event.get('evidence') or {}).get('confidence')
+        threshold=getattr(read_thresholds(db),category).candidate
+        if type(score) not in (int,float) or not math.isfinite(score) or not 0 <= score <= 1 or score < threshold:
+            return None
     evidence = event.get('evidence') or {}
     serialized = json.dumps({**evidence, 'source_event_id': event_id, 'run_id': event.get('run_id'),
                              'pose': event.get('pose'), 'map_key': event.get('map_key'),
@@ -62,6 +75,19 @@ def ingest_event(db, robot, event, storage=None):
     location = f"地图{event.get('map_key', '')} ({pose['x']:.2f}, {pose['y']:.2f}) m" if localized else '定位不可用，需核对现场'
     key = f'incidents/{ident}/snapshot.jpg'
     (storage or get_storage()).put(key, jpeg, content_type='image/jpeg')
+    reviewing = category in {'fallen_person', 'smoke_fire'} and fall_review_enabled()
+    raw_key = ''
+    if reviewing and event.get('raw_snapshot_base64'):
+        raw_encoded = event['raw_snapshot_base64']
+        if not isinstance(raw_encoded, str) or len(raw_encoded) > 6 * 1024 * 1024:
+            raise ValueError('原始图片过大')
+        raw = base64.b64decode(raw_encoded, validate=True)
+        with Image.open(BytesIO(raw)) as image:
+            if image.format != 'JPEG' or image.width * image.height > 16_000_000:
+                raise ValueError('原始图片须为有效 JPEG')
+            image.verify()
+        raw_key = f'incidents/{ident}/original.jpg'
+        (storage or get_storage()).put(raw_key, raw, content_type='image/jpeg')
     description=('YOLOE 持续识别到现场物品；占道未确认，请结合图片人工核实。'
                  if category=='suspected_clutter' else
                  '车端目标搜索记录；位置为车辆位置，不是目标坐标。'
@@ -74,6 +100,17 @@ def ingest_event(db, robot, event, storage=None):
                     occurred_at=occurred.astimezone(timezone.utc))
     db.add(item)
     db.flush()
+    if reviewing:
+        job = FallReview(incident_id=ident, raw_key=raw_key)
+        db.add(job)
+        if raw_key:
+            item.media_keys = json.dumps([key, raw_key])
+            item.title = '视觉候选，等待 DS 复核（未告警）'
+            item.description = '本地检测通过阈值与持续确认，单张现场原图等待云端复核。'
+        else:
+            from .fall_review import finish_review
+            finish_review(db, job, 'failed', error='车端未提供未标注原图，未调用 DS，请人工核实')
+        return item
     users = [u for u in db.scalars(select(User)).all() if u.active and {'incidents.read', 'notifications.read'} <= u.permissions]
     notify_users(db, kind='incident', title=item.title, body=item.location, ref_id=ident, users=users)
     return item

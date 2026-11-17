@@ -38,7 +38,7 @@ async def start_direct_navigation(db, binding, user, payload):
         raise HTTPException(422, "导航预览标识无效") from None
     context = robot_context_service.context(binding[0], binding)
     if not capability_snapshot(db, context)["capabilities"]["navigate"]["executable"]:
-        raise HTTPException(409, "导航尚未就绪或缺少当前版本实车验收")
+        raise HTTPException(409, "导航尚未就绪，请检查定位、传感器与地图状态")
     preview = previews.pop((user.id, plan_id), None)
     if (preview is None or preview[:2] != (binding, control_lease_manager.generation)
             or preview[2] <= time.monotonic()):
@@ -59,5 +59,8 @@ async def start_direct_navigation(db, binding, user, payload):
         if isinstance(exc, (HTTPException, asyncio.CancelledError)):
             raise
         if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
-            raise HTTPException(409, "车端未接受导航，请重新预览并核对控制状态") from exc
+            try: detail=exc.response.json().get('detail','车端未接受导航')
+            except ValueError:detail='车端未接受导航'
+            message=detail.get('message',detail) if isinstance(detail,dict) else detail
+            raise HTTPException(409, str(message)[:450]) from exc
         raise HTTPException(409, "导航启动未确认，请核对车辆状态") from exc

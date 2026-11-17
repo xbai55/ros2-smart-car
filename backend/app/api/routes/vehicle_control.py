@@ -126,16 +126,18 @@ PATHS = re.compile(r"^(mode|command|emergency-stop|speed|avoidance|color-target|
 def authorize_vehicle_write(path, payload, permissions):
     if "robots.control" not in permissions:
         raise HTTPException(403, "缺少机器人控制权限")
+    if path.startswith('navigation/handoff-') or path == 'mapping/finish-for-tasks':
+        raise HTTPException(409, '请通过地图准备接口操作')
     if path in {"navigation/task", "navigation/task/action"}:
         # Business task creation and actions must retain their persistent records.
         raise HTTPException(409, "请通过业务任务接口操作")
     if path == "command":
         if (not isinstance(payload, dict) or not isinstance(payload.get("command"), str)
                 or payload["command"] not in DRIVE_COMMANDS
-                or (set(payload) != {"command", "drive_id", "drive_seq"}
+                or (set(payload) not in ({"command", "drive_id", "drive_seq"}, {"command", "drive_id", "drive_seq", "intent_seq", "motion_epoch", "command_deadline"})
                     and payload != {"command": "stop"})):
             raise HTTPException(422, "手动指令格式无效")
-    if path == "mode" and (not isinstance(payload, dict) or set(payload) != {"mode"}
+    if path == "mode" and (not isinstance(payload, dict) or set(payload) not in ({"mode"}, {"mode", "client_id"})
                            or not isinstance(payload["mode"], str)):
         raise HTTPException(422, "驾驶模式无效")
     required = set()
@@ -181,9 +183,11 @@ async def vehicle_write(path: str, request: Request, db: Session = Depends(get_d
             return {**payload, "ok": result["controller_confirmed"], **result}
         binding = (robot_id, address)
         if path == "command":
-            return await send_drive(binding, user, payload["command"], payload["drive_id"], payload["drive_seq"])
+            return await send_drive(binding, user, payload["command"], payload["drive_id"], payload["drive_seq"],
+                                    intent_seq=payload.get("intent_seq"), motion_epoch=payload.get("motion_epoch"),
+                                    command_deadline=payload.get("command_deadline"))
         result = await select_operator_mode(db, binding, user, path, "mapping" if path == "mapping/restart" else payload["mode"],
-                                            stop_bound)
+                                            stop_bound, client_id=payload.get("client_id"))
         record_audit(db, user, "vehicle." + path.replace("/", "."), "robot", robot_id,
                      after={"mode": result.get("mode", "mapping")})
         db.commit()

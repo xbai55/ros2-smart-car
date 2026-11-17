@@ -337,7 +337,10 @@ class NavigationTaskRunner:
             return
         except Exception as exc:
             if epoch == self.epoch:
-                self.node.navigation.cancel(str(exc), failed=True)
+                bridge_state = self.node.navigation.snapshot()
+                if (bridge_state.get('goal_id') == self.snapshot().get('goal_id')
+                        and bridge_state.get('control_lease') == self.snapshot().get('control_lease')):
+                    self.node.navigation.cancel(str(exc), failed=True)
                 try:
                     self._update(state="failed", message=str(exc))
                 except OSError:

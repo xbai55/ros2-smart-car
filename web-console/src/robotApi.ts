@@ -2,13 +2,19 @@ import type { CalibrationPair, NavigationConfig, NavigationPlan, NavigationState
 import { vehicleControlRequest } from "./services/businessApi";
 export type ConnectionState = "connecting" | "connected" | "disconnected";
 export type RadarPoint = { x: number; y: number; distance: number };
-export type AvoidanceSettings = { enabled: boolean; trigger_distance_m: number };
+export type AvoidanceSettings = { enabled: boolean; trigger_distance_m: number; protection_mode?: "basic" | "full" };
 export type VisionStatus = { supported: boolean; state: string; message: string; mobile_ready: boolean; inference_ms?: number; frame_age_ms?: number; detections: {label:string;confidence:number;passage?:string}[] };
 export type SearchStatus = { state:string; message:string; run_id:string|null; travel?: "stationary" | "patrol"; evidence?:{save_error?:string;event_id:string} };
 type SearchCapability = {executable:boolean; reasons:string[]};
 export type VisionSettings = {enabled:boolean;clutter_enabled:boolean;clutter_prompts:string[];imgsz:number};
 export type AvoidanceStatus = {
   supported: boolean; confirmed: boolean; available: boolean;
+  sensors_ready?: boolean;
+  protection_supported?: boolean; protection_protocol?: number; motion_epoch?: string; command_valid_until?: number;
+  config_rejection?: string | null;
+  recovery_required?: boolean; interruption_reason?: string | null; scan_fault?: string | null;
+  velocity?: {ok: boolean; age_sec: number | null; linear_speed_xy: number | null; angular_speed: number | null};
+  output?: {allowed: boolean; reasons: string[]; requested?: number[]; applied?: number[]; recovery?: string};
   settings: AvoidanceSettings; requested?: AvoidanceSettings | null;
   state: string; reason: string; direction?: "left" | "right" | null;
   front_clearance_m?: number | null; instance_id?: string;
@@ -31,7 +37,7 @@ export type MapHealth = {
 };
 export type OdomHealth = {
   ok: boolean; message: string; odom_age_sec: number | null; frame_id: string;
-  child_frame_id: string; linear_speed: number; angular_speed: number;
+  child_frame_id: string; linear_speed: number; linear_speed_xy?: number; angular_speed: number;
 };
 export type CmdVelStatus = {
   ok: boolean; message: string; age_sec: number | null;
@@ -44,6 +50,7 @@ export type MappingQuality = {
   ok: boolean; level: "good" | "warn" | "bad"; message: string; issues: string[];
 };
 export type MapPose = {
+  map_session_id?: string | null; asset_digest?: string | null;
   ok: boolean; message: string; x: number; y: number; yaw: number;
   frame_id: string; child_frame_id: string; updated_at: number | null;
   age_sec?: number | null;
@@ -147,11 +154,16 @@ export function createRobotApi(fetchImpl: FetchLike = fetch) {
   }).then((response) => readJson<T>(response));
   let drive: { id: string; sequence: number } | null = null;
   let driveGeneration = 0;
-  const selectDrive = async <T extends { drive_id?: string }>(url: string, body: unknown, timeout: number) => {
+  const clientId = typeof globalThis.crypto?.randomUUID === 'function' ? globalThis.crypto.randomUUID()
+    : `driver-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  const selectDrive = async <T extends { drive_id?: string; drive_seq_floor?: number }>(url: string, body: unknown, timeout: number) => {
     const generation = ++driveGeneration;
+    const previousDrive = drive;
     drive = null;
     const result = await post<T>(url, body, timeout);
-    if (generation === driveGeneration && result.drive_id) drive = { id: result.drive_id, sequence: 0 };
+    if (generation === driveGeneration && result.drive_id) {
+      drive = { id: result.drive_id, sequence: Math.max(result.drive_seq_floor ?? 0, previousDrive?.id === result.drive_id ? previousDrive.sequence : 0) };
+    }
     return result;
   };
   return {
@@ -164,7 +176,7 @@ export function createRobotApi(fetchImpl: FetchLike = fetch) {
     startSearch: (value:unknown) => post<SearchStatus>('/api/search/start',value,30000),
     searchAction: (run_id:string,action:string) => post<SearchStatus>('/api/search/action',{run_id,action}),
     getAvoidance: () => fetchImpl('/api/avoidance', { cache: 'no-store', signal: AbortSignal.timeout(5000) }).then(r => readJson<AvoidanceStatus>(r)),
-    setAvoidance: (changes: Partial<AvoidanceSettings>) => post<AvoidanceStatus>('/api/avoidance', changes),
+    setAvoidance: (changes: Partial<AvoidanceSettings> | {acknowledge: string}) => post<AvoidanceStatus>('/api/avoidance', changes),
     getNavigationRuntime: () => fetchImpl("/api/navigation/runtime", { cache: "no-store", signal: AbortSignal.timeout(5000) }).then(r => readJson<NavigationRuntimeState>(r)),
     getNavigationCapability: () => fetchImpl("/api/navigation/capabilities", { cache: "no-store", signal: AbortSignal.timeout(5000) })
       .then(r => readJson<{navigate: SearchCapability}>(r)).then(value => value.navigate),
@@ -174,15 +186,15 @@ export function createRobotApi(fetchImpl: FetchLike = fetch) {
     calibrateNavigation: (anchors: CalibrationPair[], map_key: string, drawing?: import("./labNavigation").DrawingDescriptor) => post<NavigationConfig>("/api/navigation/calibration", { anchors, map_key, ...(drawing ? { drawing } : {}) }),
     addNavigationPlace: (name: string, drawing: Point, yaw: number, context?: { map_key: string; calibration_matrix: number[]; calibration_drawing: import("./labNavigation").DrawingDescriptor }) => post<NavigationConfig>("/api/navigation/places", { name, drawing, yaw, ...context }),
     removeNavigationPlace: (id: string) => fetchImpl(`/api/navigation/places/${encodeURIComponent(id)}`, { method: "DELETE", signal: AbortSignal.timeout(5000) }).then(r => readJson<NavigationConfig>(r)),
-    planNavigation: (goal: Pose, map_key: string, calibration_matrix: number[], drawing?: import("./labNavigation").DrawingDescriptor) => post<NavigationPlan>("/api/navigation/plan", { goal, map_key, calibration_matrix, ...(drawing ? { calibration_drawing: drawing } : {}) }, 20000),
-    startNavigation: (plan_id: string) => post<{ ok: boolean; goal_id: string }>("/api/navigation/start", { plan_id }, 30000),
+    planNavigation: (goal: Pose, map_key: string, calibration_matrix: number[], drawing?: import("./labNavigation").DrawingDescriptor) => post<NavigationPlan>("/api/navigation/plan", { goal, map_key, calibration_matrix, ...(drawing ? { calibration_drawing: drawing } : {}) }, 45000),
+    startNavigation: (plan_id: string) => post<{ ok: boolean; goal_id: string }>("/api/navigation/start", { plan_id }, 45000),
     cancelNavigation: () => post<{ ok: boolean }>("/api/navigation/cancel", {}),
     getStatus: () => fetchImpl("/api/status", { cache: "no-store", signal: AbortSignal.timeout(5000) }).then((response) => readJson<RobotStatus>(response)),
     getMap: (signal?: AbortSignal) => fetchImpl("/api/map", { cache: "no-store", signal: signal ?? AbortSignal.timeout(5000) }).then((response) => readJson<MapSnapshot>(response)),
     restartMapping: () => selectDrive<MappingRestartResult & { drive_id?: string }>("/api/mapping/restart", {}, 50000),
     setMotionSettings: (changes: Partial<MotionMappingSettings>) => post<{ok: boolean; settings: MotionMappingSettings}>("/api/mapping/settings", changes),
     saveMapping: () => post<MappingSaveResult>("/api/mapping/save", {}),
-    setMode: (mode: string) => selectDrive<{ mode: string; drive_id?: string }>("/api/mode", { mode }, 10000),
+    setMode: (mode: string) => selectDrive<{ mode: string; drive_id?: string }>("/api/mode", mode === "stop" ? {mode} : {mode, client_id: clientId}, 10000),
     sendCommand: async (command: string) => {
       if (drive) {
         return post<{ command: string }>("/api/command", { command, drive_id: drive.id, drive_seq: ++drive.sequence });

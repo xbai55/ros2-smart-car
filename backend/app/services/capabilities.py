@@ -69,10 +69,9 @@ def evaluate_capabilities(context, acceptances):
                 reasons.append("emergency_stop_active_or_unknown")
             if visual and not _digest(vision.get("model_sha256")):
                 reasons.append("model_identity_required")
-        if not accepted:
-            reasons.append("vehicle_acceptance_required")
         result[name] = {"supported": supported, "ready": ready, "accepted": accepted,
-                        "executable": supported and ready and accepted,
+                        "acceptance_required": False,
+                        "executable": supported and ready,
                         "fingerprint": fingerprint, "reasons": reasons}
     return {"robot_id": context["robot_id"], "capabilities": result, "components": manifest}
 

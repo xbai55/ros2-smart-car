@@ -13,7 +13,7 @@ def stationary_evidence(sample, after, now):
     received_at, odom = sample
     if not isinstance(odom, dict) or not after <= received_at <= now:
         return False
-    values = [odom.get(key) for key in ("odom_age_sec", "linear_speed", "angular_speed")]
+    values = [odom.get(key) for key in ("odom_age_sec", "linear_speed_xy", "angular_speed")]
     if odom.get("ok") is not True or any(type(v) not in (int, float) or not math.isfinite(v) for v in values):
         return False
     age, linear, angular = values
@@ -79,7 +79,7 @@ async def stop_vehicle(node):
             if not current.get("fresh") or any(current.get(key) != stopped_lease.get(key)
                                                 for key in ("controller_id", "control_epoch", "blocked")):
                 break
-            if stationary_evidence(getattr(node, "stop_odometry_sample", None), confirmed_at, time.monotonic()):
+            if stationary_evidence(getattr(node, "stop_velocity_sample", getattr(node, "stop_odometry_sample", None)), confirmed_at, time.monotonic()):
                 stationary = True
                 break
             await asyncio.sleep(.05)

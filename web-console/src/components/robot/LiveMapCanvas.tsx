@@ -1,3 +1,4 @@
+import { mapPoseMatchesSnapshot } from '../../mapSession';
 import { Crosshair, Download, Layers, LocateFixed, Map, Minus, Moon, Plus, Sun } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useRobotStream } from "../../hooks/useRobotStream";
@@ -56,7 +57,7 @@ export function LiveMapCanvas({ className, onPick, overlay, path = [], goal, pla
   const basis = viewMode === "auto" ? snapshot : reference.current;
   const viewport = snapshot && basis ? rotatedRasterViewport(snapshot, basis, size, zoom, { x: 0, y: 0 }, rotation) : { scale: 1, offset: { x: 0, y: 0 } };
   const scale = viewport.scale, baseOffset = viewport.offset;
-  const robotPoint = snapshot && connection === "connected" && status.map_pose.ok ? mapWorldToScreen(snapshot, status.map_pose) : null;
+  const robotPoint = snapshot && connection === "connected" && mapPoseMatchesSnapshot(snapshot, status.map_pose) ? mapWorldToScreen(snapshot, status.map_pose) : null;
   const offset = viewMode === "follow" && robotPoint && snapshot ? rotatePoint({ x: (snapshot.info.width / 2 - robotPoint.x) * scale, y: (snapshot.info.height / 2 - robotPoint.y) * scale }, rotation) : { x: baseOffset.x + pan.x, y: baseOffset.y + pan.y };
   useEffect(() => {
     const element = canvas.current; if (!element) return;

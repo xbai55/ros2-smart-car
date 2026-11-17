@@ -28,13 +28,19 @@ from .services.diagnostics.vehicle import ingest_vehicle
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     ensure_schema(engine)
+    from .services.map_preparation import run_map_preparations,recover_map_preparations
+    if settings.database_url != 'sqlite://':
+        recover_map_preparations()
     # 提前确定实时层与存储层实现，便于日志与 /api/v1/system/info 展示
     get_realtime_store()
     get_storage()
     from .services.safety_ingest import run_safety_ingest
+    from .services.fall_review import run_fall_reviews
     from .services.system_health import run_health_monitor
     workers = [asyncio.create_task(run_health_monitor()),
                asyncio.create_task(run_safety_ingest()),
+               asyncio.create_task(run_map_preparations()),
+               asyncio.create_task(run_fall_reviews()),
                asyncio.create_task(control_lease_manager.run()),
                asyncio.create_task(run_task_reconciler()),
                asyncio.create_task(AssistantWorker().run()),

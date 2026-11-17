@@ -25,6 +25,10 @@ class MappingInputRecorder:
         self._lock = threading.RLock()
         self._state = {"state": "idle", "error": None, "directory": None}
         self._last_disk_check = 0.
+        self._cancel_start = threading.Event()
+
+    def cancel_start(self):
+        self._cancel_start.set()
 
     def _write_summary(self):
         if self.directory:
@@ -39,14 +43,19 @@ class MappingInputRecorder:
                     handle.write(json.dumps({"time": time.time(), "event": kind, **data}, ensure_ascii=False, allow_nan=False) + "\n")
 
     def append_status(self, status):
-        with self._lock:
+        if not self._lock.acquire(blocking=False):
+            return
+        try:
             if self._state["state"] == "recording":
                 with (self.directory / "status.jsonl").open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps({"logged_at": time.time(), **status}, ensure_ascii=False) + "\n")
+        finally:
+            self._lock.release()
 
     def start(self, session_id, settings):
         with self._lock:
             self.stop("next_session")
+            self._cancel_start.clear()
             if not session_id.isalnum():
                 raise ValueError("invalid session id")
             self.root.mkdir(parents=True, exist_ok=True)
@@ -70,35 +79,49 @@ class MappingInputRecorder:
                         ["ros2", "bag", "record", "--storage", "sqlite3", "--qos-profile-overrides-path", str(qos),
                          "-o", str(directory / "inputs"), *INPUT_TOPICS], stdout=output,
                         stderr=subprocess.STDOUT, env=os.environ.copy(), start_new_session=True)
-                deadline = time.monotonic() + 10
-                while time.monotonic() < deadline:
-                    if self._process.poll() is not None:
-                        raise RuntimeError("完整输入记录进程启动失败，请查看 recorder.log")
-                    log = (directory / "recorder.log").read_text(encoding="utf-8", errors="replace")
-                    # Static TF is latched; require its subscription before starting SLAM.
-                    subscriptions = ("/tf_static", "/scan", *INITIAL_CONTROL_TOPICS)
-                    if all(f"Subscribed to topic '{topic}'" in log for topic in subscriptions):
-                        self._state["state"] = "recording"
-                        self._write_summary()
-                        return dict(self._state)
-                    time.sleep(.05)
-                raise RuntimeError("完整输入记录等待雷达、静态 TF 或控制话题超过 10 秒")
             except (OSError, RuntimeError) as exc:
                 self.stop("start_failed", error=str(exc))
                 self._state.update(state="error", error=str(exc), complete=False)
                 self._write_summary()
                 raise RuntimeError(str(exc)) from exc
+        try:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                with self._lock:
+                    if self._cancel_start.is_set() or self._process is None:
+                        raise RuntimeError('完整输入记录启动已取消')
+                    if self._process.poll() is not None:
+                        raise RuntimeError('完整输入记录进程启动失败，请查看 recorder.log')
+                    log = (directory/'recorder.log').read_text(encoding='utf-8', errors='replace')
+                    subscriptions = ('/tf_static', '/scan', *INITIAL_CONTROL_TOPICS)
+                    if all(f"Subscribed to topic '{topic}'" in log for topic in subscriptions):
+                        self._state['state'] = 'recording'
+                        self._write_summary()
+                        return dict(self._state)
+                self._cancel_start.wait(.05)
+            raise RuntimeError('完整输入记录等待雷达、静态 TF 或控制话题超过 10 秒')
+        except (OSError, RuntimeError) as exc:
+            self.stop('start_failed', error=str(exc))
+            raise RuntimeError(str(exc)) from exc
 
     def snapshot(self):
-        with self._lock:
+        if not self._lock.acquire(blocking=False):
+            return {**dict(self._state), 'status_refresh_pending': True}
+        try:
+            failure = None
             if self._state["state"] == "recording":
                 if self._process.poll() is not None:
-                    self.stop("process_exited", error="完整输入记录进程意外退出")
+                    failure = ('process_exited', '完整输入记录进程意外退出')
                 elif time.monotonic() - self._last_disk_check > 5:
                     self._last_disk_check = time.monotonic()
                     if shutil.disk_usage(self.root).free < 256 * 1024 * 1024:
-                        self.stop("disk_full", error="日志剩余空间不足 256 MB，完整输入记录已中断")
+                        failure = ('disk_full', '日志剩余空间不足 256 MB，完整输入记录已中断')
+            if failure:
+                self._state.update(state='error', error=failure[1])
+                threading.Thread(target=self.stop, args=failure, daemon=True).start()
             return dict(self._state)
+        finally:
+            self._lock.release()
 
     def stop(self, reason="stopped", error=None):
         with self._lock:

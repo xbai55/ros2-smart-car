@@ -1,6 +1,6 @@
 # Overrides for the installed nav2_bringup Humble defaults.
-# Measure the X3 footprint before deployment. Keep this radius equal to
-# web_app_node.navigation_robot_radius (default 0.25 m).
+# Operator-confirmed 25 x 20 cm body; preserve the measured base_link offset.
+# Radius is a conservative enclosing circle for goal and keepout checks.
 amcl:
   ros__parameters:
     base_frame_id: base_link
@@ -30,7 +30,8 @@ local_costmap:
   local_costmap:
     ros__parameters:
       robot_base_frame: base_link
-      robot_radius: 0.25
+      robot_radius: 0.18572089273961614
+      footprint: '[[0.0935, 0.1], [0.0935, -0.1], [-0.1565, -0.1], [-0.1565, 0.1]]'
       global_frame: odom
       rolling_window: true
       width: 4
@@ -62,7 +63,8 @@ global_costmap:
   global_costmap:
     ros__parameters:
       robot_base_frame: base_link
-      robot_radius: 0.25
+      robot_radius: 0.18572089273961614
+      footprint: '[[0.0935, 0.1], [0.0935, -0.1], [-0.1565, -0.1], [-0.1565, 0.1]]'
       plugins: [static_layer, obstacle_layer, inflation_layer]
       static_layer:
         plugin: nav2_costmap_2d::StaticLayer

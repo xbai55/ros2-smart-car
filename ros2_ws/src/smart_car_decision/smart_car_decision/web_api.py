@@ -33,9 +33,11 @@ ROS2 适配通过传入的 ``node`` 对象完成（鸭子类型）。``create_ap
 from __future__ import annotations
 
 import asyncio
+import math
 import json
 import logging
 import os
+import threading
 import time
 from contextlib import nullcontext
 from pathlib import Path
@@ -528,6 +530,10 @@ def create_app(
 ):
     """构造车端 FastAPI 应用（不依赖 ROS2，便于测试）。"""
     app = FastAPI(title="InsightRover 车端 Web Node", version=SERVICE_VERSION)
+    mapping_request_lock = threading.Lock()
+    from .map_handoff import MapHandoff
+    map_handoff = MapHandoff(node)
+    node.map_handoff = map_handoff
     @app.middleware('http')
     async def maintenance_guard(request, call_next):
         if (getattr(node, 'vision_maintenance_active', False) and request.method == 'POST'
@@ -591,6 +597,8 @@ def create_app(
         if not hasattr(node, "control_lease_ack"):
             return apply_control_request(node, request)
         target, value = request["target"], request["value"]
+        if map_handoff.active() and target in ('manual_cmd', 'mode') and value != 'stop':
+            raise HTTPException(409, '正在准备地图与定位，请保持静止或取消准备')
         if target == "manual_cmd" and (value != "stop" or "control_lease" in payload):
             current = node.store.snapshot()
             mode = current.get("mode")
@@ -603,17 +611,34 @@ def create_app(
             seq = payload.get("drive_seq")
             if type(seq) is not int or not 1 <= seq <= 2**53 - 1:
                 raise HTTPException(422, "驾驶指令序号无效")
+            extended = any(key in payload for key in ('intent_seq', 'motion_epoch', 'command_deadline'))
+            extras = {}
+            if extended:
+                intent_seq, motion_epoch = payload.get('intent_seq'), payload.get('motion_epoch')
+                deadline = payload.get('command_deadline')
+                if value != 'stop' and (type(deadline) not in (int, float) or not math.isfinite(deadline)
+                                        or not 0 < deadline-time.monotonic() <= .700001):
+                    raise HTTPException(409, '驾驶指令已过期，请松开后重新按下')
+                if type(intent_seq) is not int or not 1 <= intent_seq <= 2**53 - 1:
+                    raise HTTPException(422, '驾驶按压标识无效，请更新客户端')
+                if value != 'stop' and (not isinstance(motion_epoch, str) or motion_epoch != lease_bridge.snapshot().get('motion_epoch')):
+                    raise HTTPException(409, '驾驶意图已失效，请松开后重新按下')
+                extras = {'intent_seq': intent_seq, 'motion_epoch': motion_epoch, 'command_deadline': deadline}
+            avoidance = getattr(node, 'avoidance_service', None)
+            if value != 'stop' and avoidance and avoidance.snapshot().get('recovery_required'):
+                raise HTTPException(409, '完整防护已锁停，请停车并确认故障恢复')
             key = (identity["controller_id"], identity["control_epoch"], identity["owner"])
             if drive_cursor[0] == key and seq <= drive_cursor[1]:
                 raise HTTPException(409, "已收到更新的驾驶指令")
             drive_cursor = (key, seq)
-            command = _node_call(node, "set_command", value, {**identity, "drive_seq": seq})
-            return {"ok": command == value, "target": target, "command": command}
+            command = _node_call(node, "set_command", value, {**identity, "drive_seq": seq, **extras})
+            return {"ok": command == value, "target": target, "command": command,
+                    "accepted": command == value, "motion_confirmed": False}
         if target in ("manual_cmd", "mode") and value == "stop":
             result = await stop_execution()
             return {"ok": result["controller_confirmed"], "mode" if target == "mode" else "command": "stop", **result}
         if target == "mode":
-            if value not in ("manual", "mapping"):
+            if value not in ("manual", "mapping", "auto", "color_track", "object_follow"):
                 raise HTTPException(409, "此模式须通过对应任务入口操作")
             require_operator_lease(payload, value)
         elif target != "emergency_stop":
@@ -714,6 +739,14 @@ def create_app(
             snapshot["active_map_key"] = map_key(grid) if grid else None
         except (KeyError, TypeError, ValueError):
             snapshot["active_map_key"] = None
+        pose=dict(snapshot.get('map_pose') or {})
+        pose.update(map_session_id=grid.get('session_id') if grid else None,
+                    asset_digest=grid.get('asset_digest') if grid else None)
+        runtime=getattr(node,'navigation_runtime',None)
+        runtime_state=runtime.snapshot() if runtime else {}
+        if runtime_state.get('digest') and not runtime_state.get('localized'):
+            pose.update(ok=False,message=runtime_state.get('message') or 'localization_not_ready')
+        snapshot['map_pose']=pose
         avoidance = getattr(node, 'avoidance_service', None)
         if avoidance is not None:
             snapshot['avoidance'] = avoidance.snapshot()
@@ -729,6 +762,11 @@ def create_app(
         mapping = getattr(node, "mapping_restart", None)
         if mapping is not None and callable(getattr(mapping, "snapshot", None)):
             snapshot["mapping"] = mapping.snapshot()
+            started=snapshot['mapping'].get('started_at')
+            source=pose.get('source_stamp')
+            if started is not None and (type(source) not in (int,float) or not math.isfinite(source) or source<started):
+                pose.update(ok=False,message='等待本轮建图的有效地图位姿')
+
         bridge = getattr(node, "navigation", None)
         runner = getattr(node, "navigation_tasks", None)
         if runner is not None:
@@ -750,6 +788,9 @@ def create_app(
         return value
 
     def navigation_error(exc):
+        if hasattr(exc, 'retryable'):
+            return HTTPException(status_code=503 if exc.retryable else 409,
+                                 detail={'code':exc.code,'message':str(exc),'retryable':exc.retryable})
         code = 504 if isinstance(exc, TimeoutError) else 409 if isinstance(exc, RuntimeError) else 422
         return HTTPException(status_code=code, detail=str(exc))
 
@@ -920,6 +961,42 @@ def create_app(
             return navigation_component("navigation_runtime").seed(payload)
         except (ValueError, TypeError, KeyError, RuntimeError) as exc:
             raise navigation_error(exc) from exc
+
+    @app.post('/api/mapping/finish-for-tasks')
+    def capture_map_handoff(payload: dict = Body(...)):
+        def validate():
+            if not lease_bridge.accepts(payload.get('control_lease'), purpose='mapping'):
+                raise RuntimeError('建图控制授权失效，请重新建图或手动定位')
+            if node.store.snapshot().get('mode') != 'mapping':
+                raise RuntimeError('必须在本轮建图中结束并准备任务')
+        try:
+            return map_handoff.capture(payload, validate)
+        except (ValueError, KeyError, RuntimeError) as exc:
+            raise navigation_error(exc) from exc
+
+    @app.post('/api/navigation/handoff-diagnostic')
+    def handoff_diagnostic(payload: dict = Body(...)):
+        return map_handoff.diagnostic(payload)
+
+    @app.post('/api/navigation/handoff-load')
+    def load_handoff(payload: dict = Body(...)):
+        try: return map_handoff.load(payload)
+        except (ValueError, KeyError, RuntimeError, OSError) as exc: raise navigation_error(exc) from exc
+
+    @app.post('/api/navigation/handoff-seed')
+    def seed_handoff(payload: dict = Body(...)):
+        try: return map_handoff.seed(payload)
+        except (ValueError, KeyError, RuntimeError) as exc: raise navigation_error(exc) from exc
+
+    @app.post('/api/navigation/handoff-status')
+    def handoff_status(payload: dict = Body(...)):
+        try: return map_handoff.status(payload)
+        except (ValueError, KeyError, RuntimeError) as exc: raise navigation_error(exc) from exc
+
+    @app.post('/api/navigation/handoff-cancel')
+    def cancel_handoff(payload: dict = Body(...)):
+        try: return map_handoff.cancel(payload)
+        except (ValueError, KeyError, RuntimeError, OSError) as exc: raise navigation_error(exc) from exc
 
     @app.get("/api/navigation/task")
     def navigation_task(run_id: str | None = None):
@@ -1120,9 +1197,13 @@ def create_app(
                 status_code=409,
                 detail=f"mapping restart blocked by unhealthy: {','.join(blocked)}",
             )
+        if not mapping_request_lock.acquire(blocking=False):
+            raise HTTPException(409, '建图启动正在进行，请勿重复启动')
         try:
             bridge = getattr(node, "navigation", None)
-            with getattr(runtime, "operation_lock", nullcontext()), getattr(bridge, "lock", nullcontext()):
+            # Never hold the Nav2 bridge lock while waiting for rosbag discovery:
+            # ROS callbacks also need it to keep controller acknowledgements fresh.
+            with getattr(runtime, "operation_lock", nullcontext()):
                 if runner and runner.active:
                     raise HTTPException(status_code=409, detail="请先取消运输或巡航任务再建图")
                 _node_call(node, "set_command", "stop")
@@ -1138,7 +1219,13 @@ def create_app(
                 if config is not None:
                     config.invalidate_calibration()
                 try:
-                    return node.mapping_restart.restart()
+                    def validate_start():
+                        if hasattr(node, 'control_lease_ack') and not lease_bridge.accepts(
+                                (payload or {}).get('control_lease'), purpose='mapping'):
+                            raise RuntimeError('建图控制授权已失效，启动已取消')
+                        if node.store.snapshot().get('mode') != 'mapping':
+                            raise RuntimeError('未保持建图模式，启动已取消')
+                    return node.mapping_restart.restart(validate_start=validate_start)
                 finally:
                     # Refresh once after the store is cleared. Failed startup must
                     # also retain invalidation rather than revive an old alignment.
@@ -1147,6 +1234,8 @@ def create_app(
                         refresh()
         except RuntimeError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+        finally:
+            mapping_request_lock.release()
 
     @app.post("/api/mapping/save")
     def save_mapping(payload: dict | None = Body(default=None)):
@@ -1262,7 +1351,7 @@ def create_app(
         try:
             while True:
                 frame = build_ws_status_frame(
-                    navigation_status_snapshot(),
+                    await asyncio.to_thread(navigation_status_snapshot),
                     ros_status_age_sec=ros_status_age_sec(node),
                 )
                 await websocket.send_json(frame)

@@ -50,6 +50,7 @@ def manager(monkeypatch):
     manager = MappingRestartManager(Logger(), store, ros_now_ns=lambda: 100_000_000_000)
     monkeypatch.setattr(manager, "_stop_existing_slam", lambda: None)
     monkeypatch.setattr(manager, "_start_slam", lambda: Process())
+    monkeypatch.setattr(manager, '_stop_owned_slam', lambda: setattr(manager, '_process', None))
     return manager, store
 
 
@@ -289,7 +290,8 @@ def test_slow_slam_start_does_not_block_ros_callbacks(monkeypatch):
         assert entered.wait(2)
         started = time.monotonic()
         assert control.snapshot()['state'] == 'starting'
-        assert control.observe_status(healthy_status()) is False
+        control.observe_status(healthy_status())
+        assert control._status_received_at is not None
         assert control.on_map(grid(100)) is False
         assert time.monotonic()-started < .5
     finally:
@@ -299,3 +301,86 @@ def test_slow_slam_start_does_not_block_ros_callbacks(monkeypatch):
     assert control.on_map(grid(101))
     control.observe_status(healthy_status())
     assert control.snapshot()['state'] == 'ready'
+
+
+def test_cancel_during_startup_is_fast_and_never_starts_slam(monkeypatch):
+    import threading
+    control, _ = manager(monkeypatch)
+    entered, release = threading.Event(), threading.Event()
+    def wait_old():
+        entered.set()
+        assert release.wait(3)
+    monkeypatch.setattr(control, '_stop_existing_slam', wait_old)
+    monkeypatch.setattr(control, '_start_slam', lambda: pytest.fail('cancelled startup must not launch SLAM'))
+    errors = []
+    def run():
+        try: control.restart()
+        except RuntimeError as exc: errors.append(str(exc))
+    thread = threading.Thread(target=run)
+    thread.start()
+    try:
+        assert entered.wait(1)
+        with pytest.raises(RuntimeError, match='正在进行'):
+            control.restart()
+        started = time.monotonic()
+        control.stop_mapping()
+        assert time.monotonic()-started < .3
+    finally:
+        release.set()
+        thread.join(2)
+    assert not thread.is_alive() and errors
+    assert control.snapshot()['state'] == 'idle'
+
+
+def test_authority_loss_aborts_before_slam_and_requests_stop(monkeypatch):
+    control, _ = manager(monkeypatch)
+    stopped = []
+    control.on_failure = lambda: stopped.append(True)
+    monkeypatch.setattr(control, '_start_slam', lambda: pytest.fail('no SLAM after authority loss'))
+    def guard(): raise RuntimeError('授权已失效')
+    with pytest.raises(RuntimeError, match='授权已失效'):
+        control.restart(validate_start=guard)
+    assert stopped == [True] and control.snapshot()['state'] == 'error'
+
+
+def test_status_websocket_does_not_block_http_when_navigation_snapshot_waits(fake_node):
+    import threading
+    from fastapi.testclient import TestClient
+    from smart_car_decision.web_api import create_app
+    entered, release = threading.Event(), threading.Event()
+    class SlowBridge:
+        def snapshot(self):
+            entered.set()
+            release.wait(3)
+            return {'state': 'idle'}
+    fake_node.navigation = SlowBridge()
+    with TestClient(create_app(fake_node)) as client:
+        with client.websocket_connect('/ws/status'):
+            try:
+                assert entered.wait(1)
+                started = time.monotonic()
+                assert client.get('/api/control-lease').status_code == 200
+                assert time.monotonic()-started < .5
+            finally:
+                release.set()
+
+
+def test_busy_mapping_status_keeps_recording_fields(monkeypatch):
+    import threading
+    control, _ = manager(monkeypatch)
+    control.recorder = SimpleNamespace(snapshot=lambda: {'state':'recording','session_id':'recording-session'})
+    entered, release = threading.Event(), threading.Event()
+    def hold():
+        with control._lock:
+            entered.set()
+            release.wait(2)
+    thread = threading.Thread(target=hold)
+    thread.start()
+    try:
+        assert entered.wait(1)
+        started = time.monotonic()
+        assert control.snapshot()['recording']['state']=='recording'
+        assert time.monotonic()-started < .3
+    finally:
+        release.set()
+        thread.join(2)

@@ -13,17 +13,18 @@ def test_operator_command_requires_current_lease_and_monotonic_sequence(fake_nod
     import time
 
     identity = {"controller_id": "controller", "control_epoch": "epoch", "owner": "owner"}
-    fake_node.control_lease_ack = {**identity, "purpose": "manual", "blocked": False, "received_at": time.monotonic()}
+    fake_node.control_lease_ack = {**identity, "purpose": "manual", "blocked": False, "motion_epoch": "motion", "received_at": time.monotonic()}
     fake_node.store.set_mode("manual")
     published = []
     fake_node.set_command = lambda command, drive: published.append((command, drive)) or command
     client = _client(fake_node)
     assert client.post("/api/command", json={"command": "forward"}).status_code == 409
-    payload = {"control_lease": identity}
+    deadline = time.monotonic()+.7
+    payload = {"control_lease": identity, "motion_epoch": "motion", "intent_seq": 1, "command_deadline": deadline}
     assert client.post("/api/command", json={**payload, "command": "stop", "drive_seq": 2}).status_code == 200
     assert client.post("/api/command", json={**payload, "command": "forward", "drive_seq": 1}).status_code == 409
-    assert client.post("/api/command", json={**payload, "command": "turn_l", "drive_seq": 3}).status_code == 200
-    assert published == [("stop", {**identity, "drive_seq": 2}), ("turn_l", {**identity, "drive_seq": 3})]
+    assert client.post("/api/command", json={**payload, "command": "turn_l", "drive_seq": 3, "intent_seq": 2}).status_code == 200
+    assert published == [("stop", {**identity, "drive_seq": 2, "motion_epoch": "motion", "intent_seq": 1, "command_deadline": deadline}), ("turn_l", {**identity, "drive_seq": 3, "motion_epoch": "motion", "intent_seq": 2, "command_deadline": deadline})]
 
 
 def _client(node, **kwargs):

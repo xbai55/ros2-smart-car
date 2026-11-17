@@ -77,29 +77,33 @@ class SafetyOutbox:
         self.lock = threading.RLock()
         with self._connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, body TEXT NOT NULL, jpeg BLOB NOT NULL, ack INTEGER NOT NULL DEFAULT 0)')
+            if 'raw_jpeg' not in {row[1] for row in db.execute('PRAGMA table_info(events)')}:
+                db.execute("ALTER TABLE events ADD COLUMN raw_jpeg BLOB NOT NULL DEFAULT X''")
 
     def _connect(self):
         return sqlite3.connect(str(self.path), timeout=5)
 
-    def put(self, event, jpeg):
+    def put(self, event, jpeg, raw_jpeg=None):
         if not jpeg:
             raise ValueError('异常缺少现场图片，保留候选等待重试')
         event = {**event, 'event_id': event.get('event_id') or str(uuid4())}
         with self.lock, self._connect() as db:
-            db.execute('INSERT INTO events(id,body,jpeg) VALUES(?,?,?) ON CONFLICT(id) DO NOTHING',
-                       (event['event_id'], json.dumps(event, ensure_ascii=False, allow_nan=False), jpeg))
+            db.execute('INSERT INTO events(id,body,jpeg,raw_jpeg) VALUES(?,?,?,?) ON CONFLICT(id) DO NOTHING',
+                       (event['event_id'], json.dumps(event, ensure_ascii=False, allow_nan=False), jpeg, raw_jpeg or b''))
         return event
 
     def pending(self, limit=10):
         with self.lock, self._connect() as db:
-            rows = db.execute('SELECT body,jpeg FROM events WHERE ack=0 ORDER BY rowid LIMIT ?', (min(20, max(1, limit)),)).fetchall()
-        return [{**json.loads(body), 'snapshot_base64': base64.b64encode(jpeg).decode('ascii')} for body, jpeg in rows]
+            rows = db.execute('SELECT body,jpeg,raw_jpeg FROM events WHERE ack=0 ORDER BY rowid LIMIT ?', (min(20, max(1, limit)),)).fetchall()
+        return [{**json.loads(body), 'snapshot_base64': base64.b64encode(jpeg).decode('ascii'),
+                 **({'raw_snapshot_base64': base64.b64encode(raw).decode('ascii')} if raw else {})}
+                for body, jpeg, raw in rows]
 
     def acknowledge(self, ids):
         if not isinstance(ids, list) or len(ids) > 20 or any(not isinstance(x, str) for x in ids):
             raise ValueError('事件确认列表无效')
         with self.lock, self._connect() as db:
-            db.executemany("UPDATE events SET ack=1,jpeg=X'' WHERE id=?", [(x,) for x in ids])
+            db.executemany("UPDATE events SET ack=1,jpeg=X'',raw_jpeg=X'' WHERE id=?", [(x,) for x in ids])
             db.execute('DELETE FROM events WHERE ack=1 AND id NOT IN (SELECT id FROM events WHERE ack=1 ORDER BY rowid DESC LIMIT 1000)')
 
 

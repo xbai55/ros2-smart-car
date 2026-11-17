@@ -225,11 +225,13 @@ async def robot_control(
         elif command == "set_mode":
             if not isinstance(mode, str):
                 raise HTTPException(422, "驾驶模式无效")
-            response = await select_operator_mode(db, (robot_id, address), user, "mode", mode, stop_bound)
+            response = await select_operator_mode(db, (robot_id, address), user, "mode", mode, stop_bound, client_id=payload.params.get("client_id"))
             ok = True
         else:
             response = await send_drive((robot_id, address), user, command,
-                                        payload.params.get("drive_id"), payload.params.get("drive_seq"))
+                                        payload.params.get("drive_id"), payload.params.get("drive_seq"),
+                                        intent_seq=payload.params.get("intent_seq"), motion_epoch=payload.params.get("motion_epoch"),
+                                        command_deadline=payload.params.get("command_deadline"))
             ok = True
         result = {"ok": ok, "gateway": gateway.mode, "target": gateway.base_url, "detail": "ok" if ok else "停车未确认",
                   "command": gateway.build_command(robot_id, command), "response": response}
@@ -296,6 +298,11 @@ def revoke_host_execution(db, robot_id):
 async def robot_stop(robot_id: str, db: Session = Depends(get_db),
                      user: User = Depends(require_permission("robots.control"))):
     _get_robot(db, robot_id)
+    from ...models import MapPreparation
+    from sqlalchemy import update
+    import time
+    db.execute(update(MapPreparation).where(MapPreparation.active_robot==robot_id).values(
+        state='cancelled',phase='cancelled',message='已停车并取消地图准备',active_robot=None,finished_at=time.time()))
     _, address = require_bound_vehicle(db, robot_id)
     queue_error = revoke_host_execution(db, robot_id)
     try:

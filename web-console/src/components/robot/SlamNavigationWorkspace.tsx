@@ -141,7 +141,7 @@ export function SlamNavigationWorkspace({ onActive }: { onActive: (active: boole
       {plan&&!active&&<div className="navigation-distance"><span>路线长度</span><strong>{plan.distance.toFixed(2)} m</strong></div>}
       <button className="btn btn-outline navigation-action" disabled={!target||!canPlan} onClick={()=>void preview()}>{plan?"重新预览路线":"预览路线"}</button>
       <button className="btn btn-primary navigation-action" disabled={!plan||!canPlan||plan.map_key!==key||!navigationCapability?.executable} onClick={()=>void action(async()=>{window.dispatchEvent(new Event("robot-control-stop"));await api.startNavigation(plan!.plan_id);setPlan(null);})}><Navigation size={15}/>开始导航</button>
-      {nav.ready && !navigationCapability?.executable && <small>{navigationCapability?.reasons.includes("vehicle_acceptance_required") ? "导航缺少当前版本的实车验收" : "导航能力尚未确认"}</small>}
+      {nav.ready && !navigationCapability?.executable && <small>{"导航尚未就绪，请检查实时状态"}</small>}
       <button className="btn btn-outline navigation-action navigation-stop" disabled={!online||!active&&!busy} onClick={()=>{generation.current++;void action(async()=>{await api.cancelNavigation();setPlan(null);});}}><Square size={14}/>停止导航</button>
       <p className="navigation-hint" role="status">{feedback}</p>
       {placesError&&<p className="navigation-hint" role="status">地点读取失败：{placesError}</p>}

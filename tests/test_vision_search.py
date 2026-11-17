@@ -33,6 +33,17 @@ def test_unknown_task_cannot_takeover_and_old_run_cannot_release():
     assert not gate.update({**message,'run_id':'b','version':100},0.,True)
 
 
+def test_old_search_failure_never_stops_new_manual_owner(service):
+    service.search.update(state='searching', run_id='old', travel='patrol',
+                          gate_control_epoch='old-epoch', control_lease={'controller_id':'c','control_epoch':'old-epoch','owner':'search'})
+    service.node.control_lease_ack = {'controller_id':'c','control_epoch':'new-epoch','owner':'manual'}
+    service.node.search_ack = {'controller_id':'search-controller'}
+    service.node.set_mode('manual')
+    service._hold('fault', 'late old failure')
+    assert service.node.store.snapshot()['mode'] == 'manual'
+    assert service.messages[-1]['control_epoch'] == 'old-epoch'
+
+
 def test_targets_use_explicit_english_and_expand_presets():
     assert targets([{'name':'服务器'}])[0]['prompt']=='server rack'
     assert len(targets([{'name':'实验器材'}]))==3
@@ -81,6 +92,7 @@ def service(tmp_path,monkeypatch):
     state={'mode':'stop','odom':{'ok':True,'odom_age_sec':0.,'linear_speed':0.,'linear_speed_xy':0.,'angular_speed':0.},'map_pose':{'ok':False}}
     node=NS(store=NS(snapshot=lambda:dict(state)),ros_status_age_sec=lambda:0.,search_ack={},
             annotated_frames=AnnotatedFrameStore(),navigation_tasks=None,navigation=None)
+    node.control_lease_ack={"controller_id":"c", "control_epoch":"e", "owner":None}
     node.set_mode=lambda mode:state.update(mode=mode)
     messages=[];node.publish_search_control=lambda value:messages.append(value)
     value=VisionService(node,NS(),tmp_path,start_worker=False)
@@ -160,7 +172,7 @@ def test_settings_stationary_guard_and_no_false_enable(service):
 
 def test_search_hit_stops_before_evidence_io_and_keeps_latch_on_failure(service,monkeypatch):
     from smart_car_decision.vision_search import vocabulary_id
-    service.search.update(state='searching',run_id='task',targets=[{'name':'机柜','prompt':'server rack'}],travel='auto')
+    service.search.update(state='searching',run_id='task',gate_control_epoch='e',targets=[{'name':'机柜','prompt':'server rack'}],travel='auto')
     service.node.search_ack={'controller_id':'controller'}
     service.node.set_mode('auto')
     def broken(*args):
@@ -185,7 +197,7 @@ def test_wrong_vocabulary_or_task_results_are_ignored(service):
     assert service.result_at==0
 
 
-def test_visual_clutter_without_calibration_reports_once_with_honest_evidence(service,monkeypatch):
+def test_ordinary_objects_keep_overlay_without_creating_incidents(service,monkeypatch):
     from datetime import datetime
     from smart_car_decision.vision_search import vocabulary_id
     start=time.monotonic()
@@ -198,12 +210,8 @@ def test_visual_clutter_without_calibration_reports_once_with_honest_evidence(se
             'detections':[{'key':'box:'+str(i//4),'type':'cardboard box','label':'cardboard box',
                            'confidence':.9,'box':[100,100,300,300]}]})
     events=service.outbox.pending()
-    assert len(events)==1
-    event=events[0]
-    assert event['type']=='suspected_clutter' and '占道未确认' in event['title']
-    assert event['evidence']['association'] is None and not event['evidence']['passage_confirmed']
-    assert datetime.fromisoformat(event['occurred_at']).tzinfo is not None
-    assert event['model_sha256']=='real-model-hash'
+    assert events==[]
+    assert service._overlay['jpeg']==b'jpeg'
 
 
 def test_shared_safety_outbox_exposes_and_acknowledges_yolo_events(service,fake_node):

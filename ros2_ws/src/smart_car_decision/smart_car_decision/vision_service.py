@@ -16,8 +16,8 @@ from datetime import datetime, timezone
 from .navigation_tasks import _write_record
 from .component_manifest import component_manifest
 from .navigation_config import map_key
-from .safety_events import DetectionTracks, EventGate, SafetyOutbox
-from .vision_search import CLUTTER, Confirmation, associate_clutter, targets, vocabulary_id
+from .safety_events import SafetyOutbox
+from .vision_search import CLUTTER, Confirmation, targets, vocabulary_id
 from .yoloe_worker import replace_latest, run
 
 BUILD = 'vision-search-4.0.0'
@@ -69,8 +69,6 @@ class VisionService:
         self.absent_since = None
         self.route_id = None
         self.loop = None
-        self.clutter_gate = EventGate(2.,10.,.6)
-        self.clutter_tracks = DetectionTracks(expiry_sec=10.)
         self.outbox = SafetyOutbox(self.root/'vision-events.sqlite3')
         self.scan = ([],0.)
         self.thread = threading.Thread(target=self._run,daemon=True,name='vision-supervisor')
@@ -157,7 +155,18 @@ class VisionService:
             self.search['persistence_error']=str(exc)
             self.desired_gate='hold'
             self.search['state']='fault'
-            self.node.set_mode('stop')
+            if self._owns_control():
+                self.node.set_mode('stop')
+
+    def _owns_control(self):
+        live = getattr(self.node, 'control_lease_ack', {})
+        scope = self.search.get('gate_control_epoch')
+        if scope is None:
+            return False
+        if scope != live.get('control_epoch'):
+            return False
+        identity = self.search.get('control_lease')
+        return identity is None or all(identity.get(k) == live.get(k) for k in ('controller_id', 'control_epoch', 'owner'))
 
     def _gate(self, op):
         ack=getattr(self.node,'search_ack',{})
@@ -166,13 +175,16 @@ class VisionService:
         self.protocol_version+=1
         self.node.publish_search_control({'controller_id':ack['controller_id'],'run_id':self.search['run_id'],
             'version':self.protocol_version,'op':op,'reason':self.search['message'],
+            'control_epoch':self.search.get('gate_control_epoch'),
+            'control_lease':self.search.get('control_lease'),
             'diagnostic':request_ids.get()})
 
     def _hold(self, state, message):
         self.desired_gate='hold'
         self._gate('hold')
-        self.node.set_mode('stop')
-        self._pause_route()
+        if self._owns_control():
+            self.node.set_mode('stop')
+            self._pause_route()
         self._state(state,message)
 
     def _pause_route(self):
@@ -229,7 +241,10 @@ class VisionService:
                     raise RuntimeError('雷达或控制器尚未就绪')
             self.loop=asyncio.get_running_loop()
             self.search={'run_id':ident,'request_fingerprint':fingerprint,'targets':selected,
-                         'travel':travel,'control_lease':payload.get('control_lease'),'created_at':time.time()}
+                         'travel':travel,'control_lease':payload.get('control_lease'),'created_at':time.time(),
+                         'gate_control_epoch':getattr(self.node,'control_lease_ack',{}).get('control_epoch')}
+            if not self.search['gate_control_epoch']:
+                raise RuntimeError('控制权代次不可用，无法建立搜索门控')
             self.confirm=Confirmation(); self.protocol_version=0
             self.desired_gate='arm'; self.route_id=ident if travel=='patrol' else None
             self._state('preparing','准备目标词表')
@@ -323,6 +338,9 @@ class VisionService:
                     return self.search_snapshot()
                 if not self.node.navigation_tasks._lease_valid(value.get('control_lease')):
                     raise RuntimeError('巡逻搜索需要新的车辆控制租约')
+                self.search['control_lease'] = value.get('control_lease')
+                self.search['gate_control_epoch'] = value['control_lease']['control_epoch']
+                self._gate('arm')
                 self._gate('resume'); self.desired_gate='heartbeat'
                 self.at=time.monotonic(); self._state('searching','继续搜索，等待原目标离开画面',
                                                      control_lease=value.get('control_lease'))
@@ -379,23 +397,9 @@ class VisionService:
                     self.stopping_at=now
                     self._hold('stopping','已识别目标，等待车辆静止')
                     self.search['evidence']=self._save(item,found,'target_found')
-        if self.config['clutter_enabled']:
-            candidates=[]
-            for detection in item['detections']:
-                if detection['label'] not in self.config['clutter_prompts']:continue
-                association=associate_clutter(detection['box'],self.scan[0],self.config.get('calibration'),
-                    item['image_size'],item['captured_at'],self.scan[1])
-                detection['passage']='疑似占道' if association else '占道未确认'
-                # Visual observations can be reported without claiming a
-                # calibrated obstacle distance or a confirmed blocked passage.
-                if detection['confidence']>=.5:
-                    candidates.append({**detection,'association':association,
-                                       'passage_confirmed':False,'confirmation_sec':2.})
-            # The GPU tracker expires after 2 seconds. Reassociate report
-            # candidates through brief misses instead of alerting on a new ID.
-            candidates=self.clutter_tracks.update(candidates,now)
-            for event in self.clutter_gate.update(candidates,now):
-                self._save(item,event,'suspected_clutter')
+        # Ordinary objects remain visible in the overlay. Seeing an object,
+        # even with a lidar association, is not evidence of a blocked passage.
+        # Configured corridor occupancy is handled by SafetyVisionWorker.
         # Annotated output shares the existing camera overlay path.
         self._overlay={'jpeg':item['annotated'],'sequence':item['sequence'],'captured_mono':item['captured_mono']}
         self.node.annotated_frames.update(item['annotated'],now=item['captured_mono'])
@@ -474,6 +478,9 @@ class VisionService:
                     if now-checked>5:
                         self.status['mobile_ready']=not self.config_error and self._certified(); checked=now
                     active=self.search['state'] in {'preparing','searching','stopping','found','paused','fault'}
+                    if active and self.search.get('gate_control_epoch') and not self._owns_control():
+                        self._state('cancelled', '控制权已交接，旧搜索已结束')
+                        active = False
                     if active:self._gate(self.desired_gate)
                     if self.search['state']=='searching':
                         self._supervise_search(now)

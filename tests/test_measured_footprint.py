@@ -6,6 +6,13 @@ from smart_car_decision.footprint import Rectangle
 from smart_car_decision.avoidance import AvoidanceController,ScanEvidence,ZERO
 from test_avoidance import scene,step
 
+def detour_controller(*args, **kwargs):
+    # These tests exercise the explicitly enabled planner, not product defaults.
+    value = AvoidanceController(*args, **kwargs)
+    value.settings['enabled'] = True
+    return value
+
+
 
 def test_live_recorded_gap_is_still_unknown_not_synthetic_obstacle():
     d=json.loads((Path(__file__).parent/'fixtures/measured-scan-20261028.json').read_text(encoding='utf-8'))
@@ -13,7 +20,7 @@ def test_live_recorded_gap_is_still_unknown_not_synthetic_obstacle():
     s=N(**{k:d[k] for k in ('angle_min','angle_increment','range_min','range_max')},
         ranges=[float(v) for v in d['ranges']],header=N(stamp=N(**d['stamp'])))
     e=ScanEvidence(s,d['transform'],cfg['self_returns'],f,.01)
-    c=AvoidanceController();c.footprint=f;c.settings['trigger_distance_m']=.4
+    c=detour_controller();c.footprint=f;c.settings['trigger_distance_m']=.4
     result=c.step({**ZERO,'linear_x':.1},mode='manual',now=0,evidence=e,scan_age=.1,pose=(0,0,0),odom_age=.1)
     assert result==ZERO
     assert c.coverage['kind']=='unknown'
@@ -33,7 +40,7 @@ def test_rectangle_allows_side_space_but_turn_checks_rear_bag():
     e=scene(obstacles=((0,.394,.01),))
     assert f.check(e,(.02,0,0),.15,(1,0)) is None
     assert f.check(scene(obstacles=((- .30,0,.02),)),(0,0,.1),.15)['kind']=='obstacle'
-    c=AvoidanceController();c.footprint=f
+    c=detour_controller();c.footprint=f
     assert step(c,e)['linear_x']>0
 
 

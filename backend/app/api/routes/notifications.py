@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from ...core.pagination import run_list
@@ -30,6 +30,15 @@ def list_notifications(
     if kind:
         stmt = stmt.where(Notification.kind == kind)
     return run_list(db, stmt, serialize_notification, page, page_size)
+
+
+@router.post('/read-all')
+def mark_all_read(db: Session = Depends(get_db), user: User = Depends(require_permission('notifications.read'))):
+    # One atomic update: notifications arriving afterwards remain unread.
+    ids=list(db.scalars(update(Notification).where(Notification.user_id==user.id, Notification.read.is_(False))
+                        .values(read=True).returning(Notification.id)))
+    db.commit()
+    return {'updated_count':len(ids), 'read_ids':ids}
 
 
 @router.post("/{notification_id}/read")

@@ -157,7 +157,7 @@ function useSharedRobot() {
     if (!validThreshold(distance)) { setError("防撞距离必须为 0–5 米"); return false; }
     return (await perform(() => api.setModeObstacleStopDistance(mode, distance), `防撞距离已设置为 ${distance.toFixed(2)} m`)) !== null;
   }, [api, perform]);
-  const setAvoidance = useCallback(async (changes: Partial<AvoidanceSettings>) => {
+  const setAvoidance = useCallback(async (changes: Partial<AvoidanceSettings> | {acknowledge: string}) => {
     window.dispatchEvent(new Event('robot-control-stop'));
     if (statusRef.current.mode !== 'stop') { setError('请先切换停止模式，再修改主动避障'); return false; }
     const result = await perform(() => api.setAvoidance(changes), '设置已发送，等待车端控制器确认');

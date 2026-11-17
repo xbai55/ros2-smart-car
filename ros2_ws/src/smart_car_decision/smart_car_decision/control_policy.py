@@ -148,6 +148,15 @@ def decide_motion(
             angular = min(angular, max_angular_speed)
         return _manual_motion(manual_command, scaled_cruise_speed, angular)
 
+    if mode in {"auto", "color_track", "object_follow"} and has_recent_lane:
+        try:
+            if not math.isfinite(float(lane_offset)):
+                raise ValueError('Invalid lane offset')
+        except (TypeError, ValueError):
+            if diagnostic_reasons is not None:
+                diagnostic_reasons.append('follow_input_invalid')
+            return zero_motion()
+
     if mode == "color_track":
         if not has_recent_lane:
             if diagnostic_reasons is not None:
@@ -221,9 +230,15 @@ def _detection_motion(detection, cruise_speed, slow_speed, turn_speed):
 
 def _offset_follow_motion(lane_offset, speed, lane_kp, max_angular_speed):
     motion = zero_motion()
+    try:
+        offset = float(lane_offset)
+        if not math.isfinite(offset):
+            return motion
+    except (TypeError, ValueError):
+        return motion
     motion["linear_x"] = speed
     motion["angular_z"] = clamp(
-        -float(lane_offset) * lane_kp,
+        -offset * lane_kp,
         -max_angular_speed,
         max_angular_speed,
     )

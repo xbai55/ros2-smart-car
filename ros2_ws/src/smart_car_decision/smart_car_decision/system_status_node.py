@@ -337,12 +337,19 @@ class SystemStatusNode(Node):
         siny_cosp = 2.0 * (rotation.w * rotation.z + rotation.x * rotation.y)
         cosy_cosp = 1.0 - 2.0 * (rotation.y * rotation.y + rotation.z * rotation.z)
         translation = transform.transform.translation
+        components=(translation.x,translation.y,translation.z,rotation.x,rotation.y,rotation.z,rotation.w)
+        if (not all(math.isfinite(v) for v in components)
+                or abs(sum(v*v for v in (rotation.x,rotation.y,rotation.z,rotation.w))-1)>.01):
+            self.state['map_pose']={'ok':False,'message':'invalid_transform','frame_id':'map',
+                                    'child_frame_id':self.tf_child_frame,'updated_at':checked_at}
+            return
         stamp = transform.header.stamp
         pose_age = max(0., (self.get_clock().now().nanoseconds - stamp.sec * 1_000_000_000 - stamp.nanosec) / 1e9)
         self.state["map_pose"] = {
             "ok": pose_age <= 1.5,
             "message": "ok" if pose_age <= 1.5 else "stale",
             "age_sec": round(pose_age, 3),
+            "source_stamp": stamp.sec + stamp.nanosec / 1e9,
             "x": round(float(translation.x), 4),
             "y": round(float(translation.y), 4),
             "yaw": round(math.atan2(siny_cosp, cosy_cosp), 4),

@@ -4,6 +4,8 @@ import tempfile
 from pathlib import Path
 
 import yaml
+from smart_car_decision.vehicle_geometry import FOOTPRINT, BOUNDING_RADIUS_M
+import json
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
@@ -32,7 +34,7 @@ def launch_navigation(context):
     overrides = yaml.safe_load((share / "config" / "navigation.yaml").read_text())
     merge_parameters(parameters, overrides)
     radius = float(LaunchConfiguration('robot_radius').perform(context))
-    if not .01 <= radius <= 2: raise RuntimeError('Invalid robot radius')
+    if not BOUNDING_RADIUS_M <= radius <= 2: raise RuntimeError('Robot radius must enclose the confirmed body')
     keepout = LaunchConfiguration('keepout').perform(context)
     if keepout and not Path(keepout).is_file(): raise RuntimeError('Keepout file is missing')
     for group in parameters.values():
@@ -42,8 +44,9 @@ def launch_navigation(context):
         parameters[name][name]["ros__parameters"]["use_sim_time"] = False
         group=parameters[name][name]['ros__parameters']
         group['robot_radius']=radius
-        # The configured radius is the complete conservative footprint used by
-        # both the goal guard and the pre-expanded keepout mask.
+        group['footprint']=json.dumps(FOOTPRINT)
+        # Native collision checks use the rectangle. Goal and keepout checks
+        # retain its conservative enclosing circle; do not expand keepout twice.
         group['footprint_padding']=0.0
         if keepout:
             group['filters']=['keepout_filter']
@@ -90,6 +93,6 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument("map", description="Absolute path to the saved laboratory map YAML."),
         DeclareLaunchArgument('keepout', default_value='', description='Optional footprint-expanded keepout YAML.'),
-        DeclareLaunchArgument('robot_radius', default_value='0.25'),
+        DeclareLaunchArgument('robot_radius', default_value=str(BOUNDING_RADIUS_M)),
         OpaqueFunction(function=launch_navigation),
     ])

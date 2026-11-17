@@ -82,7 +82,9 @@ class FakeMappingRestart:
     def __init__(self):
         self.calls = 0
 
-    def restart(self):
+    def restart(self, validate_start=None):
+        if validate_start:
+            validate_start()
         self.calls += 1
         return {"ok": True, "pid": 4242, "message": "slam_toolbox restarted"}
 

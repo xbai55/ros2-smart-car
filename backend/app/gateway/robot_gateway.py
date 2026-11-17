@@ -71,7 +71,7 @@ class RobotGateway:
                      'elapsed_ms': (time.monotonic() - request.extensions['diagnostic_started']) * 1000,
                  })
 
-        return httpx.AsyncClient(timeout=timeout, trust_env=False, headers=headers,
+        return httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=min(4.,timeout)), trust_env=False, headers=headers,
                                  event_hooks={'request': [start], 'response': [finish]})
 
     def _url(self, path: str) -> str:
@@ -143,13 +143,20 @@ class RobotGateway:
         return result
 
     async def navigation_request(self, path: str, payload: dict | None = None, *, query: dict | None = None) -> dict:
-        if path not in {"load-map", "runtime", "task", "task/action", "resolve-resources", "config", "start"}:
+        if path not in {"load-map", "runtime", "task", "task/action", "resolve-resources", "config", "start",
+                        'handoff-load','handoff-seed','handoff-status','handoff-cancel','handoff-diagnostic'}:
             raise ValueError("不支持的导航接口")
         if not self.base_url:
             raise RuntimeError("未配置小车地址")
-        async with self._client(max(self.timeout, 25.0)) as client:
+        async with self._client(max(self.timeout, 130.0 if path in {'load-map','handoff-load'} else 45.0)) as client:
             url = self._url(f"/api/navigation/{path}")
             response = await (client.get(url, params=query) if payload is None else client.post(url, json=payload))
+            response.raise_for_status()
+            return response.json()
+
+    async def finish_mapping_for_tasks(self, payload):
+        async with self._client(25) as client:
+            response = await client.post(self._url('/api/mapping/finish-for-tasks'), json=payload)
             response.raise_for_status()
             return response.json()
 

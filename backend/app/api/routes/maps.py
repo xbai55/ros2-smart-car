@@ -146,6 +146,14 @@ async def save_slam_map(payload: SlamMapIn, db: Session = Depends(get_db), user:
         raise _error(502, "小车保存地图失败，请检查车端连接与地图状态", "VEHICLE_UNAVAILABLE") from exc
     except (httpx.HTTPError, RuntimeError, ValueError) as exc:
         raise _error(502, str(exc) or "无法连接小车保存地图", "VEHICLE_UNAVAILABLE") from exc
+    return register_slam_export(db, payload, user, exported)
+
+
+def register_slam_export(db, payload, user, exported):
+    map_id = str(uuid5(NAMESPACE_URL, f"slam:{payload.robot_id}:{payload.request_id}"))
+    existing = db.get(MapModel, map_id)
+    if existing is not None:
+        return serialize_map(existing)
     try:
         packed = snapshot_assets(exported["snapshot"])
     except (KeyError, ValueError, TypeError) as exc:

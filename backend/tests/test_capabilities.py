@@ -32,11 +32,13 @@ def context():
     }}
 
 
-def test_ready_vehicle_requires_independent_acceptance():
+def test_ready_vehicle_executes_without_acceptance_record():
     result = evaluate_capabilities(context(), [])["capabilities"]
     assert result["navigate"]["ready"]
     assert not result["navigate"]["accepted"]
-    assert not result["navigate"]["executable"]
+    assert result["navigate"]["executable"]
+    assert result["navigate"]["acceptance_required"] is False
+    assert "vehicle_acceptance_required" not in result["navigate"]["reasons"]
     assert not result["observe_target"]["supported"]
 
 
@@ -46,6 +48,19 @@ def test_changed_map_or_build_invalidates_acceptance():
     assert evaluate_capabilities(value, records)["capabilities"]["navigate"]["executable"]
     value["telemetry"]["active_map_key"] = "map-b"
     assert not evaluate_capabilities(value, records)["capabilities"]["navigate"]["accepted"]
+    assert evaluate_capabilities(value, records)["capabilities"]["navigate"]["executable"]
+    value['telemetry']['component_manifest']['source_sha256']='c'*64
+    assert evaluate_capabilities(value, records)['capabilities']['navigate']['executable']
+
+
+def test_removing_acceptance_gate_keeps_emergency_stop_and_readiness_checks():
+    value=context()
+    value['telemetry']['emergency_stop']=True
+    for state in evaluate_capabilities(value,[])['capabilities'].values():
+        assert not state['executable']
+        assert 'vehicle_acceptance_required' not in state['reasons']
+    value=context();value['telemetry']['navigation']['ready']=False
+    assert not evaluate_capabilities(value,[])['capabilities']['navigate']['executable']
 
 
 def test_old_vehicle_and_stale_state_fail_closed():
@@ -85,7 +100,7 @@ def test_stationary_search_requires_own_acceptance_without_nav2():
     value["telemetry"].update(active_map_key=None, navigation={}, mode="stop", odom={"ok": True})
     value["telemetry"]["vision"].update(stationary_search_supported=True, state="running", mobile_ready=False)
     result = evaluate_capabilities(value, [])["capabilities"]["observe_target"]
-    assert result["ready"] and not result["executable"]
+    assert result["ready"] and result["executable"]
     records = [acceptance(value, "observe_target")]
     assert evaluate_capabilities(value, records)["capabilities"]["observe_target"]["executable"]
 
@@ -146,7 +161,7 @@ def test_acceptance_registration_checks_identity_permissions_and_revocation(clie
         again = client.post(path + "/revoke", headers=admin, json={"reason": "迟到的重复撤销"})
         assert again.json()["revocation_reason"] == "实车复测发现异常"
         assert not client.get(path, headers=admin).json()["evidence_valid"]
-        assert not client.get("/api/v1/robots/fixture-robot-1/capabilities", headers=admin).json()["capabilities"]["navigate"]["executable"]
+        assert client.get("/api/v1/robots/fixture-robot-1/capabilities", headers=admin).json()["capabilities"]["navigate"]["executable"]
     finally:
         seeded_db.expire_all()
         row = seeded_db.get(CapabilityAcceptance, body["request_id"])

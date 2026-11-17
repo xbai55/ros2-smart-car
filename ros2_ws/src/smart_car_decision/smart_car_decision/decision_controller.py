@@ -1,3 +1,4 @@
+from .service_budgets import NAVIGATION_START_WAIT
 import json
 import math
 import time
@@ -25,6 +26,8 @@ from .search_control import SearchGate
 from .diagnostic_log import DiagnosticLog, wire_ids
 from .motion_diagnostics import MotionDiagnostics, vector
 from .control_lease import ControlLease
+from .local_collision_guard import local_guard, velocity_evidence, distance_scan_ready
+from collections import deque
 from .scan_provenance import visibility
 from .scan_health import ScanHealth
 
@@ -81,6 +84,13 @@ class DecisionController(Node):
         self.pose = None
         self.odom_at = 0.0
         self.actual_speed = 0.0
+        self.velocity_at = 0.0
+        self.velocity_speed = self.velocity_angular = 0.0
+        self.velocity_history = deque()
+        self.recovery_required = False
+        self.interruption_reason = None
+        self.output_status = {}
+        self.scan_fault = "scan_unavailable"
         self.search_gate = SearchGate()
         self.diagnostic_log = DiagnosticLog('controller')
         self.motion_diagnostics = MotionDiagnostics(self.diagnostic_log)
@@ -159,7 +169,7 @@ class DecisionController(Node):
         self.declare_parameter("publish_rate_hz", 20.0)
         self.declare_parameter('avoidance_robot_radius', .25)
         self.declare_parameter('avoidance_motion_model', 'holonomic')
-        self.declare_parameter('avoidance_assume_missing_clear', True)
+        self.declare_parameter('avoidance_assume_missing_clear', False)
         self.declare_parameter('avoidance_settings_path', '~/.ros/insightrover/obstacle-avoidance.json')
         self.declare_parameter('avoidance_footprint_path', '~/.ros/insightrover/avoidance-footprint.json')
 
@@ -212,9 +222,49 @@ class DecisionController(Node):
                 continue
         return distances
 
+    def velocity_status(self, now):
+        age = now - getattr(self, 'velocity_at', getattr(self, 'odom_at', 0.))
+        speed = getattr(self, 'velocity_speed', self.actual_speed)
+        angular = getattr(self, 'velocity_angular', getattr(self, 'actual_angular', math.inf))
+        valid = all(math.isfinite(v) for v in (age, speed, angular)) and 0 <= age <= .5
+        return {'ok': valid, 'age_sec': age if math.isfinite(age) else None,
+                'measured_at': now-age if math.isfinite(age) else None,
+                'linear_speed_xy': speed if math.isfinite(speed) else None,
+                'angular_speed': angular if math.isfinite(angular) else None}
+
+    def stationary(self):
+        v = self.velocity_status(time.monotonic())
+        return (self.mode == 'stop' and not self.emergency_stop and v['ok']
+                and v['linear_speed_xy'] < .01 and abs(v['angular_speed']) < .02)
+
+    def sensors_ready(self, now):
+        ready = (self.scan_evidence is not None and 0 <= now-self.evidence_at <= .6
+                 and self.velocity_status(now)['ok'] and not getattr(self, 'scan_fault', None))
+        if self.avoidance.settings.get('protection_mode', 'basic') == 'full' or bool(self.avoidance.path or self.avoidance.anchor is not None):
+            ready = ready and self.pose is not None and 0 <= now-self.odom_at <= .5 and self.evidence_pose is not None
+        if self.avoidance.settings.get('protection_mode', 'basic') == 'basic':
+            ready = ready and distance_scan_ready(self.scan_evidence)
+        return bool(ready)
+
+    def interrupt_intent(self, reason):
+        lease = getattr(self, 'control_lease', None)
+        if lease:
+            if self.mode in ('manual', 'mapping'):
+                lease.interrupt_motion()
+            else:
+                lease.revoke('safety_intervention')
+        self.interruption_reason = reason
+        self.recovery_required = (getattr(self, 'recovery_required', False) or
+                                  (self.avoidance.settings.get('protection_mode', 'basic') == 'full'
+                                   and reason.startswith('avoidance_')))
+        self.manual_command = 'stop'
+        self.last_manual_time = self.last_navigation_time = 0.
+        self.navigation_motion = None
+        self.operator_stop = True
+
     def on_scan(self, scan):
         self._latest_raw_scan=scan
-        previous=(self.scan_evidence,self.evidence_at,self.evidence_pose)
+        previous=(self.scan_evidence,self.evidence_at,self.evidence_pose,getattr(self,'scan_fault',None))
         self._pending_tf_scan=None
         self.front_distance = front_range_statistic(
             scan,
@@ -224,12 +274,17 @@ class DecisionController(Node):
         )
         self.last_scan_time = time.monotonic()
         self.scan_evidence = None
+        self.scan_fault = "scan_unavailable"
         try:
-            if getattr(self,'footprint_error',None):return
+            if getattr(self,'footprint_error',None):
+                self.scan_fault = "footprint_invalid"
+                return
             stamp = Time.from_msg(scan.header.stamp)
             age = (self.get_clock().now() - stamp).nanoseconds / 1e9
             if not 0 <= age <= .6:
+                self.scan_fault = "scan_stale"
                 return
+            self.scan_fault = 'scan_mount_tf_unavailable'
             transform = self.tf_buffer.lookup_transform('base_link', scan.header.frame_id, stamp).transform
             q = transform.rotation
             values = (transform.translation.x, transform.translation.y, q.x, q.y, q.z, q.w)
@@ -237,19 +292,13 @@ class DecisionController(Node):
                     or abs(q.x*q.x+q.y*q.y+q.z*q.z+q.w*q.w-1) > .01):
                 return
             yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
-            odom_tf = self.tf_buffer.lookup_transform('odom', 'base_link', stamp).transform
-            oq = odom_tf.rotation
-            self.evidence_pose = (odom_tf.translation.x, odom_tf.translation.y,
-                                  math.atan2(2*(oq.w*oq.z+oq.x*oq.y), 1-2*(oq.y*oq.y+oq.z*oq.z)))
-            if not all(math.isfinite(v) for v in self.evidence_pose) or abs(oq.x*oq.x+oq.y*oq.y+oq.z*oq.z+oq.w*oq.w-1) > .01:
-                return
             key=(scan.header.stamp.sec,scan.header.stamp.nanosec)
             packet=getattr(self,'scan_packets',{}).get(key)
             clear, summary=visibility(scan,packet,getattr(self,'scan_profile',{}))
             if not hasattr(self,'scan_health'):self.scan_health=ScanHealth()
             health=self.scan_health.observe(scan,age)
             matched=summary.get('source')=='driver_provenance'
-            assume=getattr(self,'assume_missing_clear',True)
+            assume=getattr(self,'assume_missing_clear',False)
             active=bool(assume and matched and packet.get('healthy') is True and health['ready_for_inference'])
             self.scan_evidence = ScanEvidence(scan, (transform.translation.x, transform.translation.y, yaw),
                                               getattr(self,'self_returns',()),self.avoidance.footprint,
@@ -268,6 +317,23 @@ class DecisionController(Node):
                     ranges[index]=distance
                 self.scan_evidence._visibility=ranges
             self.evidence_at = time.monotonic() - age
+            self.scan_fault = None
+            self.evidence_pose = None
+            if self.avoidance.settings.get('protection_mode', 'basic') == 'full' or self.avoidance.settings['enabled']:
+                try:
+                    self.scan_fault = 'scan_odom_tf_unavailable'
+                    odom_tf = self.tf_buffer.lookup_transform('odom', 'base_link', stamp).transform
+                    oq = odom_tf.rotation
+                    self.evidence_pose = (odom_tf.translation.x, odom_tf.translation.y,
+                                          math.atan2(2*(oq.w*oq.z+oq.x*oq.y), 1-2*(oq.y*oq.y+oq.z*oq.z)))
+                    if not all(math.isfinite(v) for v in self.evidence_pose) or abs(oq.x*oq.x+oq.y*oq.y+oq.z*oq.z+oq.w*oq.w-1) > .01:
+                        raise ValueError('Invalid planner odometry transform')
+                    self.scan_fault = None
+                except Exception:
+                    if self.avoidance.settings.get('protection_mode', 'basic') == 'full':
+                        raise
+                    self.evidence_pose = None
+                    self.scan_fault = None
         except Exception as exc:
             # The scan can arrive a few milliseconds before its exact odom TF.
             # Retry that same stamped scan; never substitute a latest-time TF
@@ -275,11 +341,30 @@ class DecisionController(Node):
             if isinstance(exc, ExtrapolationException) and 'future' in str(exc).lower():
                 self._pending_tf_scan=scan
                 if previous[0] is not None and 0 <= time.monotonic()-previous[1] <= .6:
-                    self.scan_evidence,self.evidence_at,self.evidence_pose=previous
+                    self.scan_evidence,self.evidence_at,self.evidence_pose,self.scan_fault=previous
             else:
                 self.scan_evidence = None
 
     def on_avoidance_odom(self, msg):
+        now = time.monotonic()
+        source_age = (self.get_clock().now().nanoseconds / 1e9 -
+                      (msg.header.stamp.sec + msg.header.stamp.nanosec / 1e9))
+        if now-source_age <= getattr(self, 'velocity_at', -math.inf):
+            return
+        try:
+            transform = None
+            if msg.child_frame_id != 'base_link':
+                transform = self.tf_buffer.lookup_transform(msg.child_frame_id, 'base_link', Time.from_msg(msg.header.stamp)).transform
+            speed, angular, measured_at = velocity_evidence(msg, self.get_clock().now().nanoseconds / 1e9, now, transform)
+            self.velocity_speed, self.velocity_angular, self.velocity_at = speed, angular, measured_at
+            history = getattr(self, 'velocity_history', None)
+            if history is None:
+                self.velocity_history = history = deque()
+            history.append((measured_at, speed, abs(angular)))
+            while history and measured_at - history[0][0] > 1.1:
+                history.popleft()
+        except Exception:
+            self.velocity_at = 0.
         try:
             stamp = Time.from_msg(msg.header.stamp)
             age = (self.get_clock().now() - stamp).nanoseconds / 1e9
@@ -305,7 +390,7 @@ class DecisionController(Node):
             self.actual_angular_speed=msg.twist.twist.angular.z
             if not all(math.isfinite(v) for v in (*pose, speed, msg.twist.twist.angular.z)):
                 raise ValueError('Non-finite odometry')
-            if self.pose is not None and (math.hypot(pose[0]-self.pose[0], pose[1]-self.pose[1]) > .20 or abs(wrap(pose[2]-self.pose[2])) > .5):
+            if (self.avoidance.settings.get('protection_mode', 'basic') == 'full' or bool(self.avoidance.path)) and self.pose is not None and (math.hypot(pose[0]-self.pose[0], pose[1]-self.pose[1]) > .20 or abs(wrap(pose[2]-self.pose[2])) > .5):
                 self.avoidance.stop('sensor_fault', '里程计发生跳变，请停止后重试')
             self.pose, self.actual_speed = pose, speed
             self.actual_angular = msg.twist.twist.angular.z
@@ -328,19 +413,36 @@ class DecisionController(Node):
             if (self.avoidance_confirmed and not self.avoidance_config.error and request_id == self.avoidance_request_id
                     and settings == self.avoidance.settings and radius == self.avoidance.radius):
                 return
-            if self.mode != 'stop' or self.pose is None or time.monotonic()-self.odom_at > .5 or self.actual_speed > .01 or abs(self.actual_angular) > .03:
+            if not self.stationary() or getattr(getattr(self, "control_lease", None), "owner", None) is not None:
+                self.config_rejection, self.rejected_request_id = "请先停车并释放控制权，再修改防护设置", request_id
                 return
-            if settings != self.avoidance_config.value or self.avoidance_config.error:
+            recovery_epoch = request.get('recovery_epoch')
+            if getattr(self, 'recovery_required', False):
+                if recovery_epoch != getattr(self.control_lease, 'motion_epoch', None) or not self.sensors_ready(time.monotonic()):
+                    self.config_rejection, self.rejected_request_id = '故障未消失或恢复代次已变化，请刷新后重试', request_id
+                    return
+                self.recovery_required = False
+                self.interruption_reason = None
+                self.control_lease.interrupt_motion()
+            if settings != self.avoidance_config.value or self.avoidance_config.error or self.avoidance_config.needs_migration:
                 self.avoidance_config.save(settings)
+            if settings != self.avoidance.settings and getattr(self, "control_lease", None):
+                self.control_lease.revoke("protection_settings_changed")
+            self.manual_command = "stop"
+            self.last_manual_time = self.last_navigation_time = 0.
+            self.navigation_motion = None
             self.avoidance.settings = settings
             self.avoidance.radius = radius
             self.avoidance.reset()
+            self.config_rejection = self.rejected_request_id = None
             self.avoidance_confirmed = True
             self.avoidance_request_id = request_id
         except (ValueError, KeyError, TypeError, OSError) as exc:
-            self.avoidance_confirmed = False
-            self.avoidance_config.error = '避障设置未生效：' + str(exc)
-            self.avoidance.stop('sensor_fault', str(exc))
+            self.config_rejection = str(exc)
+            self.rejected_request_id = request.get("request_id") if isinstance(locals().get("request"), dict) else None
+            if not self.avoidance_confirmed:
+                self.avoidance_config.error = '防护设置未生效：' + str(exc)
+                self.avoidance.stop('sensor_fault', str(exc))
 
     def publish_avoidance_status(self):
         now = time.monotonic()
@@ -348,7 +450,22 @@ class DecisionController(Node):
                    'request_id': self.avoidance_request_id, 'instance_id': self.avoidance_instance_id,
                    'robot_radius_m': self.avoidance.radius,
                    'confirmed': self.avoidance_confirmed and not self.avoidance_config.error,
-                   'available': self.scan_evidence is not None and now-self.evidence_at <= .6 and self.pose is not None and now-self.odom_at <= .5}
+                   'sensors_ready': self.sensors_ready(now),
+                   'available': self.sensors_ready(now) and not getattr(self, 'recovery_required', False),
+                   'protection_protocol': 2, 'command_valid_until': now + ControlLease.COMMAND_TTL,
+                   'motion_epoch': getattr(getattr(self, 'control_lease', None), 'motion_epoch', None),
+                   'recovery_required': getattr(self, 'recovery_required', False),
+                   'interruption_reason': getattr(self, 'interruption_reason', None),
+                   'scan_fault': getattr(self, 'scan_fault', None),
+                   'recovery_condition': '停车并确认故障恢复' if getattr(self, 'recovery_required', False) else '条件恢复后松开再按；自主任务需显式恢复',
+                   'config_rejection': getattr(self, 'config_rejection', None),
+                   'rejected_request_id': getattr(self, 'rejected_request_id', None),
+                   'velocity': self.velocity_status(now),
+                   'output': getattr(self, 'output_status', {}),
+                   'protection_behavior': 'measured_distance' if self.avoidance.settings.get('protection_mode', 'basic') == 'basic' else 'observed_sweep',
+                   'protections': ['emergency_stop', 'command_expiry', 'control_lease', 'directional_collision', 'swept_rotation', 'task_scoped_checks']}
+        if payload['recovery_required']:
+            payload.update(state='recovery_required', reason='完整防护已锁停，请停车并确认故障恢复')
         if self.avoidance_config.error:
             payload.update(state='sensor_fault', reason=self.avoidance_config.error)
         transition = (payload['state'], payload['reason'])
@@ -399,7 +516,7 @@ class DecisionController(Node):
                 intent = json.loads(msg.data)
             except (ValueError, TypeError):
                 return
-            if not lease.accepts_drive(intent, now, self.mode):
+            if (getattr(self, "recovery_required", False) and intent.get("command") != "stop") or not lease.accepts_drive(intent, now, self.mode):
                 sink = getattr(self, 'diagnostic_log', None)
                 if sink and now - getattr(self, '_last_rejection', 0) >= 1:
                     self._last_rejection = now
@@ -414,7 +531,11 @@ class DecisionController(Node):
         if command != self.manual_command:
             self.avoidance.reset()
         self.manual_command = command
+        if command and command != "stop":
+            self.interruption_reason = None
         self.last_manual_time = now
+        if lease is not None and command != 'stop' and 'command_deadline' in intent:
+            self.last_manual_time = min(now, intent['command_deadline'] - self.command_timeout_sec)
         self.operator_stop = self.manual_command == 'stop'
         if self.operator_stop:
             self.avoidance.reset()
@@ -430,6 +551,8 @@ class DecisionController(Node):
             self.last_manual_time = 0.0
             self.navigation_motion = None
             self.last_navigation_time = 0.0
+            self.navigation_started_at = time.monotonic()
+            self.navigation_received = False
             self.operator_stop = False
             self.avoidance.reset()
             if next_mode in self.follow_targets:
@@ -440,6 +563,10 @@ class DecisionController(Node):
     def on_navigation_command(self, msg):
         if self.mode != "navigation":
             return
+        now=time.monotonic()
+        if not getattr(self,'navigation_received',False) and now-getattr(self,'navigation_started_at',now)>NAVIGATION_START_WAIT:
+            return
+        self.navigation_received = True
         self.navigation_motion = {"linear_x": msg.linear.x, "linear_y": msg.linear.y, "angular_z": msg.angular.z}
         self.last_navigation_time = time.monotonic()
 
@@ -449,12 +576,21 @@ class DecisionController(Node):
             self.control_lease.revoke('emergency_stop')
 
     def on_speed_scale(self, msg):
-        self.speed_scale = max(0.0, min(1.0, float(msg.data)))
+        try:
+            value = float(msg.data)
+            if not math.isfinite(value):
+                raise ValueError('Invalid speed scale')
+            self.speed_scale = max(0.0, min(1.0, value))
+        except (ValueError, TypeError):
+            self.speed_scale = 0.
+            self.interrupt_intent('speed_scale_invalid')
 
     def on_turn_speed(self, msg):
         try:
             self.manual_turn_speed = turn_speed(round(float(msg.data), 3))
-        except ValueError as exc:
+        except (ValueError, TypeError) as exc:
+            self.manual_turn_speed = math.nan
+            self.interrupt_intent("turn_speed_invalid")
             self.get_logger().warning(str(exc))
 
     def on_mode_obstacle_stop_distances(self, msg):
@@ -470,7 +606,8 @@ class DecisionController(Node):
         self.control_overruns=getattr(self,'control_overruns',0)+int(period>2./self.publish_rate_hz)
         twist = Twist()
         diagnostics = getattr(self, 'motion_diagnostics', None)
-        reasons = [] if diagnostics and diagnostics.sink.enabled else None
+        reasons = []
+        requested_intent = self.manual_command if self.mode in ('manual', 'mapping') else self.mode
         motion = decide_motion(
             mode=self.mode,
             emergency_stop=self.emergency_stop,
@@ -501,8 +638,8 @@ class DecisionController(Node):
         lease = getattr(self, 'control_lease', None)
         lease_blocked = lease is not None and (lease.blocked(now) or lease.purpose != self.mode)
         policy = vector(motion) if reasons is not None else None
-        gate_blocked = False
-        if self.operator_stop or self.emergency_stop or (gate_blocked := gate is not None and gate.blocked(now)) or lease_blocked:
+        gate_blocked = gate is not None and gate.blocked_for(lease, self.mode, now)
+        if self.operator_stop or self.emergency_stop or gate_blocked or lease_blocked:
             if reasons is not None:
                 if self.operator_stop:
                     reasons.append('operator_stop')
@@ -523,15 +660,51 @@ class DecisionController(Node):
         if any(motion.values()) and evidence is not None and self.pose is not None and self.evidence_pose is not None:
             tx, ty = self.avoidance.local(self.evidence_pose[:2], self.pose)
             evidence = evidence.reframe(tx, ty, wrap(self.evidence_pose[2]-self.pose[2]))
-        avoidance_input = any(motion.values()) if reasons is not None else False
-        motion = self.avoidance.step(motion, mode=self.mode, now=now,
-                    evidence=evidence, scan_age=now-self.evidence_at,
-                    pose=self.pose, odom_age=now-self.odom_at,
-                    confirmed=self.avoidance_confirmed and not self.avoidance_config.error,
-                    legacy_stop=self.mode_obstacle_stop_distances.get(self.mode, self.obstacle_stop_distance),
-                    actual_speed=self.actual_speed)
+        avoidance_input = any(motion.values())
+        full = self.avoidance.settings.get('protection_mode', 'basic') == 'full'
+        self.avoidance.distance_only_guard = not full
+        planning = False
+        if not full and self.avoidance.settings['enabled'] and self.mode != 'navigation':
+            active_path = bool(self.avoidance.path or self.avoidance.anchor is not None)
+            clearance = None
+            if self.scan_evidence is not None:
+                f = self.avoidance.footprint
+                if f:
+                    points = [x-f.front for x,y in self.scan_evidence.points if x>=f.front and abs(y)<=f.half_width+.05]
+                    clearance = min(points) if points else None
+                else:
+                    clearance = self.scan_evidence.front_clearance(self.avoidance.radius)
+            planner_ready = (self.pose is not None and self.evidence_pose is not None and 0 <= now-self.odom_at <= .5)
+            planning = active_path or (planner_ready and motion['linear_x'] > 0 and clearance is not None
+                                       and clearance <= self.avoidance.settings['trigger_distance_m'])
+        local = not full and not planning
+        if avoidance_input and getattr(self, 'recovery_required', False):
+            reasons.append('recovery_confirmation_required')
+            motion = dict(ZERO)
+            avoidance_input = False
+        if local and avoidance_input and (not self.avoidance_confirmed or self.avoidance_config.error):
+            motion = self.avoidance.stop('waiting', '等待控制器确认防护设置')
+        elif local and avoidance_input:
+            v = self.velocity_status(now)
+            history = list(getattr(self, 'velocity_history', ())) + list(getattr(self, 'motion_history', ()))
+            speed = max([v['linear_speed_xy'] or 0.] + [x[1] for x in history if now-x[0] <= 1.1])
+            angular = max([abs(v['angular_speed'] or 0.)] + [x[2] for x in history if now-x[0] <= 1.1])
+            motion = local_guard(self.avoidance, motion, evidence=self.scan_evidence,
+                                 scan_age=now-self.evidence_at, speed=speed, angular=angular,
+                                 velocity_age=now-getattr(self, 'velocity_at', self.odom_at) if v['ok'] else math.inf)
+        else:
+            if getattr(self, 'scan_fault', None):
+                evidence = None
+            motion = self.avoidance.step(motion, mode=self.mode, now=now,
+                        evidence=evidence, scan_age=now-self.evidence_at,
+                        pose=self.pose, odom_age=now-self.odom_at,
+                        confirmed=self.avoidance_confirmed and not self.avoidance_config.error,
+                        legacy_stop=self.mode_obstacle_stop_distances.get(self.mode, self.obstacle_stop_distance),
+                        actual_speed=self.actual_speed)
         if avoidance_input and not any(motion.values()):
             reasons.append('avoidance_' + self.avoidance.state)
+            if self.avoidance.state in {'sensor_fault', 'blocked', 'timeout', 'waiting_observation', 'braking', 'waiting'}:
+                self.interrupt_intent(reasons[-1])
         # The final gate also prevents avoidance manoeuvres continuing after expiry.
         if lease_blocked:
             if reasons is not None and any(motion.values()):
@@ -546,6 +719,27 @@ class DecisionController(Node):
                 motion = dict(ZERO)
             else:
                 motion["linear_x"] = min(motion["linear_x"], limit)
+        if self.mode in ('manual', 'mapping') and self.manual_command != 'stop' and 'manual_command_timeout' in reasons:
+            self.interrupt_intent('manual_command_timeout')
+        if self.mode=='navigation' and 'navigation_command_timeout' in reasons and not getattr(self,'navigation_received',False):
+            started=getattr(self,'navigation_started_at',None)
+            waiting=started is not None and 0<=now-started<=NAVIGATION_START_WAIT
+            reasons=[('navigation_waiting_command' if waiting else 'navigation_start_timeout') if r=='navigation_command_timeout' else r for r in reasons]
+        interruption_codes=('navigation_start_timeout','navigation_command_timeout','follow_target_unavailable',
+                            'follow_input_timeout','detection_timeout','scan_timeout','navigation_invalid_velocity','follow_input_invalid')
+        if (self.mode not in ('stop','manual','mapping') and policy is not None and not any(motion.values())
+                and getattr(lease,'owner',None) is not None):
+            cause=next((r for r in reasons if r in interruption_codes),None)
+            if cause:self.interrupt_intent(cause)
+        if not hasattr(self, 'motion_history'):
+            self.motion_history = deque()
+        self.motion_history.append((now, math.hypot(motion['linear_x'], motion['linear_y']), abs(motion['angular_z'])))
+        while self.motion_history and now-self.motion_history[0][0] > 1.1:
+            self.motion_history.popleft()
+        self.output_status = {'allowed': any(motion.values()), 'reasons': list(dict.fromkeys(reasons)),
+                              'requested': policy, 'applied': vector(motion),
+                              'recovery': '停车并确认故障恢复' if getattr(self, 'recovery_required', False) else
+                                          '条件恢复后松开并重新按下；自主任务需显式恢复'}
         twist.linear.x = motion["linear_x"]
         twist.linear.y = motion["linear_y"]
         twist.angular.z = motion["angular_z"]
@@ -558,11 +752,11 @@ class DecisionController(Node):
         if reasons is not None:
             try:
                 ids = getattr(self, 'lease_diagnostic_ids', {})
-                if self.mode in ('manual', 'mapping') and not self.operator_stop:
+                if self.mode in ('manual', 'mapping') and requested_intent != 'stop':
                     ids = {**ids, **getattr(self, 'drive_diagnostic_ids', {})}
                 if gate_blocked and getattr(self, 'search_diagnostic_ids', None):
                     ids = self.search_diagnostic_ids
-                intent = self.manual_command if self.mode in ('manual', 'mapping') else self.mode
+                intent = requested_intent
                 if intent == 'stop':
                     intent = None
                 diagnostics.observe(time.monotonic(), mode=self.mode, intent=intent, policy=policy,
@@ -577,8 +771,7 @@ class DecisionController(Node):
     def on_control_lease(self, message):
         try:
             now = time.monotonic()
-            stationary = (not self.emergency_stop and self.mode == 'stop' and 0 <= now-self.odom_at < .5 and self.actual_speed < .01
-                          and abs(getattr(self, 'actual_angular_speed', 1.)) < .02)
+            stationary = self.stationary()
             request = json.loads(message.data)
             if self.control_lease.update(request, now, stationary) and request["op"] != "renew":
                 self.lease_diagnostic_ids = wire_ids(request.get('diagnostic'))
@@ -609,9 +802,11 @@ class DecisionController(Node):
     def on_search_control(self, message):
         try:
             value = json.loads(message.data)
-            stationary = (self.mode == 'stop' and time.monotonic()-self.odom_at < .5
-                          and self.actual_speed < .01 and abs(getattr(self,'actual_angular_speed',1.)) < .02)
-            if self.search_gate.update(value, time.monotonic(), stationary) and value.get('op') != 'heartbeat':
+            stationary = self.stationary()
+            lease = getattr(self, 'control_lease', None)
+            if lease is None or value.get('control_epoch') != lease.epoch:
+                return
+            if self.search_gate.update(value, time.monotonic(), stationary, lease=lease) and value.get('op') != 'heartbeat':
                 self.search_diagnostic_ids = {**wire_ids(value.get('diagnostic')), 'run_id': self.search_gate.run_id}
         except (ValueError, TypeError, AttributeError):
             pass

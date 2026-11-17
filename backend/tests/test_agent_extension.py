@@ -153,7 +153,7 @@ def test_execute_uses_existing_acceptance_gate_and_one_execution(db_scope, monke
         assert len(db.scalars(select(AssistantExecution)).all()) == 1
     else:
         assert result['state'] == 'rejected' and not rows
-        assert '验收' in result['error']
+        assert '就绪' in result['error']
 
 
 def test_log_tool_uses_shared_visibility_redaction_paging_and_time_bounds(db_scope, tmp_path, monkeypatch):

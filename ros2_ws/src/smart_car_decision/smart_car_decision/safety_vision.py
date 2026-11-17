@@ -243,6 +243,7 @@ class SafetyVisionWorker:
                     identity = map_key(grid) if grid else ''
                     pose = status.get('map_pose', {})
                     pose_fresh = self.node.ros_status_age_sec() is not None and self.node.ros_status_age_sec() <= 2.5
+                    raw_frame = frame.copy()
                     candidates, frame, timings = predict_specialists(models, frame, config)
                     candidates = tracks.update(candidates, time.monotonic())
                     with self.lock:
@@ -265,6 +266,12 @@ class SafetyVisionWorker:
                         continue
                     now = time.monotonic()
                     for candidate in gate.update(candidates, now):
+                        raw_jpeg = None
+                        if candidate['type'] in {'fallen_person', 'smoke_fire'}:
+                            raw_ok, raw_encoded = cv2.imencode('.jpg', raw_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                            if not raw_ok:
+                                raise ValueError('原始现场图片编码失败')
+                            raw_jpeg = raw_encoded.tobytes()
                         runner = getattr(self.node, 'navigation_tasks', None)
                         task = runner.snapshot() if runner else {}
                         pending.append(({'event_id': str(uuid4()), 'type': candidate['type'], 'title': TITLES[candidate['type']],
@@ -274,7 +281,7 @@ class SafetyVisionWorker:
                                          'model_sha256': candidate.get('model_sha256'),
                                          'position_kind': 'vehicle_not_target',
                                          'pose': pose if pose_fresh and pose.get('ok') else None,
-                                         'evidence': candidate}, jpeg.tobytes()))
+                                         'evidence': candidate}, jpeg.tobytes(), raw_jpeg))
                     while pending:
                         self.outbox.put(*pending[0])
                         pending.pop(0)

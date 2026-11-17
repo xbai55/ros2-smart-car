@@ -49,7 +49,7 @@ def event():
     Image.new('RGB', (16, 16), 'orange').save(output, format='JPEG')
     return {'event_id': str(uuid4()), 'type': 'smoke_fire', 'title': 'Test smoke',
             'occurred_at': '2026-10-17T04:00:00+00:00', 'pose': None, 'map_key': 'test-map',
-            'evidence': {'validation': 'not_evaluated'},
+            'evidence': {'validation': 'not_evaluated', 'confidence': .9},
             'snapshot_base64': base64.b64encode(output.getvalue()).decode()}
 
 
@@ -71,17 +71,19 @@ def test_retry_saves_one_incident_and_one_notification_per_recipient(seeded_db, 
     assert '定位不可用' in again.location
 
 
-def test_yolo_visual_event_is_persisted_without_claiming_confirmed_blockage(seeded_db,tmp_path):
+def test_old_visual_observation_is_acknowledgeable_without_incident_or_media(seeded_db,tmp_path):
     import json
     value=event();value.update(type='suspected_clutter',title='发现物品（占道未确认）',
                                model_sha256='model-hash',position_kind='vehicle_not_target')
     value['evidence']={'label':'cardboard box','confidence':.8,'association':None,'passage_confirmed':False}
     robot=seeded_db.scalar(select(Robot));storage=LocalStorageService(str(tmp_path))
-    item=ingest_event(seeded_db,robot,value,storage);seeded_db.commit()
-    assert item.type=='suspected_clutter' and '占道未确认' in item.description
-    assert json.loads(item.evidence)['model_sha256']=='model-hash'
-    assert ingest_event(seeded_db,robot,value,storage).id==item.id
-    assert storage.get(f'incidents/{item.id}/snapshot.jpg')
+    before=len(seeded_db.scalars(select(Incident)).all())
+    notifications=len(seeded_db.scalars(select(Notification)).all())
+    assert ingest_event(seeded_db,robot,value,storage) is None
+    seeded_db.commit()
+    assert len(seeded_db.scalars(select(Incident)).all())==before
+    assert len(seeded_db.scalars(select(Notification)).all())==notifications
+    assert not list(tmp_path.rglob('*.jpg'))
 
 
 def test_failed_evidence_write_does_not_create_incident(seeded_db):

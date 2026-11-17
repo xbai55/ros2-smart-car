@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from .routes import map_preparation
 
 from .routes import (
     analytics,
@@ -33,6 +34,7 @@ api_router.include_router(robots.router)
 api_router.include_router(capability_acceptances.router)
 api_router.include_router(resources.router)
 api_router.include_router(maps.router)
+api_router.include_router(map_preparation.router)
 api_router.include_router(routes.router)
 api_router.include_router(patrols.router)
 api_router.include_router(patrol_tasks.router)

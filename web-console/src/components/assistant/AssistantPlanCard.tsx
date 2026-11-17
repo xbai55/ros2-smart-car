@@ -16,7 +16,6 @@ const capabilityReasons: Record<string, string> = {
   unsupported_protocol_or_capability: "车端版本尚未支持此能力", vehicle_not_ready: "车端尚未就绪",
   telemetry_stale_or_unknown: "缺少新鲜的车端状态", active_map_required: "尚无已加载的导航地图",
   emergency_stop_active_or_unknown: "急停状态待核对", model_identity_required: "视觉模型版本待核对",
-  vehicle_acceptance_required: "当前版本缺少此能力的实车验收",
 };
 const executionLabels: Record<string, string> = {
   queued: "已确认，等待执行", running: "执行中", paused: "已暂停",

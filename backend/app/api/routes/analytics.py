@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ...models import Incident, MissionTask, PatrolTask, Robot, User
 from ...services.realtime import get_realtime_store
 from ...services.robots import serialize_robot
+from ...services.fall_review import alert_clause
 from ..deps import get_db, require_permission
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
@@ -58,7 +59,7 @@ def _task_trend(db: Session, days: int = 7) -> list[dict]:
 def _overview(db: Session) -> dict:
     patrols = db.execute(select(PatrolTask)).scalars().all()
     missions = db.execute(select(MissionTask)).scalars().all()
-    incidents = db.execute(select(Incident)).scalars().all()
+    incidents = db.execute(select(Incident).where(alert_clause())).scalars().all()
     statuses, _ = _robot_statuses(db)
 
     patrol_completed = sum(1 for p in patrols if p.status == "completed")
@@ -187,7 +188,7 @@ def analytics_incidents(
     db: Session = Depends(get_db),
     _: User = Depends(require_permission("analytics.read")),
 ) -> dict:
-    incidents = db.execute(select(Incident)).scalars().all()
+    incidents = db.execute(select(Incident).where(alert_clause())).scalars().all()
     resolved = sum(1 for i in incidents if i.status == "resolved")
     return {
         "total": len(incidents),
@@ -230,7 +231,7 @@ def statistics_robot(
     missions = db.execute(
         select(MissionTask).where(MissionTask.robot_id == robot_id)
     ).scalars().all()
-    incidents = db.execute(select(Incident).where(Incident.robot_id == robot_id)).scalars().all()
+    incidents = db.execute(select(Incident).where(Incident.robot_id == robot_id, alert_clause())).scalars().all()
     store = get_realtime_store()
     return {
         "robot_id": robot_id,

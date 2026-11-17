@@ -114,7 +114,7 @@ config=json.loads(path.read_text()) if path.is_file() else {{'enabled':True,'rat
 if path.exists(): (root/'previous-safety-vision.json').write_bytes(path.read_bytes())
 models=config.setdefault('models',[])
 for ident,filename,category,mapping,confidence,sha in [
- ('fall-yolo11','yolo11-fall.pt','fallen_person',{{'fallen':'fallen_person'}},.25,{meta['sha256']!r}),
+ ('fall-yolo11','yolo11-fall.pt','fallen_person',{{'fallen':'fallen_person'}},.50,{meta['sha256']!r}),
  ('smoke-fire-yolo11','yolo11-smoke-fire.pt','smoke_fire',{{'smoke':'smoke_fire','fire':'smoke_fire'}},.5,{training['sha256']!r})]:
  if not any(category in s.get('class_map',{{}}).values() for s in models):
   models.append({{'id':ident,'path':str(root/filename),'class_map':mapping,'confidence':confidence,'sha256':sha,'validation':'not_evaluated'}})

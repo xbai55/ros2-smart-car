@@ -66,3 +66,12 @@ export function startMapPolling(options: {
   void load();
   return () => { active = false; abort.abort(); if (timer !== undefined) clock.cancel(timer); };
 }
+
+
+export function mapPoseMatchesSnapshot(snapshot: MapSnapshot, pose: MapPose) {
+  return pose.ok && [pose.x,pose.y,pose.yaw].every(Number.isFinite)
+    && pose.frame_id === snapshot.header.frame_id
+    && (!snapshot.session_id || pose.map_session_id === snapshot.session_id)
+    && (!snapshot.asset_digest || pose.asset_digest === snapshot.asset_digest)
+    && (pose.age_sec === undefined || (typeof pose.age_sec === 'number' && Number.isFinite(pose.age_sec) && pose.age_sec >= 0 && pose.age_sec <= 1.5));
+}

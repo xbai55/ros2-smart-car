@@ -8,9 +8,9 @@ const commands = [
   {id:"left",label:"左移",key:"A / ←",icon:ArrowLeft}, {id:"stop",label:"停止",key:"空格",icon:CircleStop}, {id:"right",label:"右移",key:"D / →",icon:ArrowRight},
   {id:"backward",label:"后退",key:"S / ↓",icon:ArrowDown},
 ];
-export function DrivePad({ robotId = LIVE_ROBOT_ID }: {robotId?:string}) {
+export function DrivePad({ robotId = LIVE_ROBOT_ID, disabled = false }: {robotId?:string; disabled?:boolean}) {
   const { status, connection, pending, sendCommand } = useRobotStream();
-  const enabled = canDrive(status, connection === "connected", robotId) && !pending;
+  const enabled = canDrive(status, connection === "connected", robotId) && !pending && !disabled;
   const [active, setActive] = useState<string|null>(null);
   const controller = useRef<DriveHoldController|null>(null);
   const focusTarget = useRef<HTMLDivElement>(null);
@@ -39,6 +39,10 @@ export function DrivePad({ robotId = LIVE_ROBOT_ID }: {robotId?:string}) {
     <div className="live-drive-heading"><strong>手动驾驶</strong><span>{active ? "正在行驶" : "按住行驶 · 松开停止"}</span></div>
     <button className="btn btn-outline" type="button" disabled={!enabled} onClick={() => focusTarget.current?.focus()}>点击此处使用键盘驾驶</button>
     <p className="live-helper">方向键 / WASD 驾驶，Q / E 转向，空格停止；Alt＋方向键平移地图。输入或调整滑条时暂停快捷键。</p>
+    {status.avoidance?.confirmed && status.avoidance.protection_supported && <p className="live-helper" role="status">
+      {status.avoidance.settings.protection_mode === 'full' ? '完整防护' : '基础防护'} · 主动绕行{status.avoidance.settings.enabled ? '开启' : '关闭'} ·
+      {status.avoidance.output?.allowed ? '最终速度已放行' : status.avoidance.recovery_required ? '请停车并在设置中确认故障恢复' : status.avoidance.interruption_reason ? '已安全停车，条件恢复后松开再按' : '按住驾驶，松开停车'}
+    </p>}
     <div className="live-drive-pad">
       {commands.map(({id,label,key,icon:Icon})=><button key={id} type="button" className={cn("live-drive-button",id==="stop"&&"stop",id==="backward"&&"backward",active===id&&"pressed")}
         disabled={id==="stop" ? connection!=="connected" || robotId!==LIVE_ROBOT_ID : !enabled} aria-label={label}

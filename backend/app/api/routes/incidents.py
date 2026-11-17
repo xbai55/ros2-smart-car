@@ -4,10 +4,10 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from ...core.pagination import run_list
-from ...models import Incident, Robot, User
+from ...models import FallReview, Incident, Robot, User
 from ...schemas.ops import IncidentAction, IncidentCreate, IncidentUpdate
 from ...services.ops import json_loads, notify_users, record_audit
 from ..deps import get_db, require_permission
@@ -41,6 +41,9 @@ def _parse_dt(value: str | None) -> datetime | None:
 
 
 def serialize_incident(item: Incident) -> dict:
+    from ...services.fall_review import serialize_review
+    session = object_session(item)
+    review = session.get(FallReview, item.id) if session else None
     return {
         "id": item.id,
         "type": item.type,
@@ -53,6 +56,7 @@ def serialize_incident(item: Incident) -> dict:
         "location": item.location,
         "media_keys": json_loads(item.media_keys),
         "evidence": json_loads(item.evidence, {}),
+        "review": serialize_review(review),
         "image_url": item.image_url,
         "video_url": item.video_url,
         "handled_by": item.handled_by,
@@ -81,12 +85,18 @@ def list_incidents(
     robot_id: str | None = Query(default=None),
     type: str | None = Query(default=None),
     keyword: str | None = Query(default=None),
+    review_scope: str = Query(default='alerts', pattern='^(alerts|candidates|all)$'),
     occurred_from: datetime | None = Query(default=None),
     occurred_before: datetime | None = Query(default=None),
     page: int | None = Query(default=None, ge=1),
     page_size: int | None = Query(default=None, ge=1, le=200),
 ):
     stmt = select(Incident).order_by(Incident.created_at.desc())
+    candidates = select(FallReview.incident_id).where(FallReview.state != 'supported')
+    if review_scope == 'alerts':
+        stmt = stmt.where(Incident.id.not_in(candidates))
+    elif review_scope == 'candidates':
+        stmt = stmt.where(Incident.id.in_(candidates))
     if any(value is not None and value.tzinfo is None for value in (occurred_from, occurred_before)):
         raise HTTPException(422, "时间范围必须包含时区")
     if occurred_from is not None and occurred_before is not None and occurred_from >= occurred_before:
@@ -109,8 +119,22 @@ def list_incidents(
     return run_list(db, stmt, serialize_incident, page, page_size)
 
 
+from ...services.safety_alert_settings import AlertThresholds, read_thresholds, save_thresholds
+
+@router.get('/safety/thresholds')
+def get_alert_thresholds(db: Session = Depends(get_db), _: User = Depends(require_permission('incidents.read'))):
+    return read_thresholds(db).model_dump()
+
+@router.put('/safety/thresholds')
+def put_alert_thresholds(payload: AlertThresholds, db: Session = Depends(get_db), user: User = Depends(require_permission('incidents.manage'))):
+    result=save_thresholds(db,payload)
+    record_audit(db,user,'safety.configure_thresholds','robot',None,after=result)
+    db.commit()
+    return result
+
 @router.get('/safety/status')
 async def safety_status(db: Session = Depends(get_db), _: User = Depends(require_permission('incidents.read'))):
+    from ...services.assistant_provider import fall_review_enabled
     from ...services.safety_ingest import get_vehicle_url, pipeline_status
     from ...gateway.robot_gateway import RobotGateway
     url = get_vehicle_url(db)
@@ -118,7 +142,7 @@ async def safety_status(db: Session = Depends(get_db), _: User = Depends(require
         async with RobotGateway._client(3.) as client:
             response = await client.get(url + '/api/safety/status')
             response.raise_for_status()
-            return {**response.json(), 'ingest': dict(pipeline_status)}
+            return {**response.json(), 'ingest': dict(pipeline_status), 'fall_review_enabled': fall_review_enabled()}
     except Exception:
         return {'state': 'unavailable', 'message': '暂未连接到车端巡检识别服务', 'detections': [], 'ingest': dict(pipeline_status)}
 

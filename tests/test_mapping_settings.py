@@ -161,7 +161,7 @@ def test_recorder_startup_is_ordered_before_slam_and_failure_is_not_ready(monkey
     manager=MappingRestartManager(logger,MapSnapshotStore(),recorder=recorder,
                                   capture_initial_inputs=lambda:events.append(('initial_controls',1)))
     manager.settings.update(max_laser_range=1.)
-    monkeypatch.setattr(manager,'_stop_existing_slam',lambda:None)
+    monkeypatch.setattr(manager,'_stop_existing_slam',lambda:setattr(manager,'_process',None))
     monkeypatch.setattr(manager,'_start_slam',lambda:events.append(('slam',1)) or SimpleNamespace(pid=123,poll=lambda:None))
     manager.restart()
     assert events[:3]==[('record',1.),('initial_controls',1),('slam',1)]

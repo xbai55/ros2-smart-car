@@ -1,8 +1,9 @@
 """Map-free, bounded obstacle detours. Geometry and state are independent of ROS."""
 import math
 import time
+from .avoidance_settings import DEFAULTS
 
-BUILD_ID = "avoidance-0.3.11-body-interior-mask"
+BUILD_ID = "avoidance-4.0.8-distance-basic"
 
 ZERO = {"linear_x": 0.0, "linear_y": 0.0, "angular_z": 0.0}
 MIN_CLEARANCE_M = .05
@@ -248,6 +249,23 @@ class ScanEvidence:
         return max(0.0, min(values)) if values else None
 
 
+class DistanceOnlyEvidence:
+    """Known returns only; never changes raw rays or declares unknown rays clear."""
+    distance_only = True
+
+    def __init__(self, source):
+        self.source = source
+
+    def __getattr__(self, name):
+        return getattr(self.source, name)
+
+    def free_disk(self, x, y, radius):
+        return self.source.collision_free(x, y, radius)
+
+    def translation_free(self, x, y, radius, physical_radius):
+        return self.source.directional_collision_free(x, y, radius, (x, y))
+
+
 class AvoidanceController:
     def __init__(self, radius=.25, timeout=45.0, max_speed=.25, speed_ratio=.8, motion_model='differential'):
         if motion_model not in {'differential','holonomic'}:
@@ -258,7 +276,7 @@ class AvoidanceController:
             raise ValueError('Invalid avoidance footprint radius')
         self.timeout = timeout
         self.max_speed, self.speed_ratio = max_speed, speed_ratio
-        self.settings = {"enabled": True, "trigger_distance_m": .6}
+        self.settings = dict(DEFAULTS)
         self.last_stop_event = None
         self.requested_motion = dict(ZERO)
         self.applied_motion = dict(ZERO)
@@ -305,7 +323,7 @@ class AvoidanceController:
 
     def stop(self, state, reason):
         self.state, self.reason = state, reason
-        if state in {"blocked", "sensor_fault", "timeout", "braking"}:
+        if state in {"blocked", "sensor_fault", "timeout", "braking", "waiting_observation"}:
             self.last_stop_event = {"state": state, "reason": reason, "mode": self.last_mode,
                                     "timestamp": time.time(),
                                     "blocking_point_m": self.blocking_point,
@@ -325,6 +343,8 @@ class AvoidanceController:
         return pose[0] + c * p[0] - s * p[1], pose[1] + s * p[0] + c * p[1]
 
     def guard(self, motion, evidence, radius):
+        if getattr(self, "distance_only_guard", False) and not getattr(evidence, "distance_only", False):
+            evidence = DistanceOnlyEvidence(evidence)
         vx, vy, w = (motion[k] for k in ZERO)
         if not any((vx, vy, w)):
             return dict(ZERO)

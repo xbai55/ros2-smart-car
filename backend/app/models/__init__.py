@@ -11,6 +11,8 @@ from .core import (
     Route,
 )
 from .user import Permission, Role, User
+from .fall_review import FallReview
+from .map_preparation import MapPreparation
 from .capability import CapabilityAcceptance
 from .assistant import AssistantTrialAuthorization
 from .assistant import AssistantConfiguration, AssistantEvent, AssistantExecution, AssistantPlan, AssistantReport, AssistantSession, AssistantTurn, AssistantWorkerLock, SafetyCoverage

@@ -66,7 +66,7 @@ async def execute_search(db, binding, user, operation, payload, *, guard=None, t
             current = capability_snapshot(db, context)["capabilities"][capability]
             if not current["executable"]:
                 if travel != "stationary" or trial_context is None or not current["supported"] or not current["ready"]:
-                    raise HTTPException(409, "搜索尚未就绪或缺少当前版本的实车验收")
+                    raise HTTPException(409, "搜索尚未就绪，请检查识别模型、传感器与控制状态")
                 from .assistant_trials import require_trial
                 require_trial(db, user, trial_context[0], capability, current["fingerprint"], trial_context[1])
             if travel == "patrol":

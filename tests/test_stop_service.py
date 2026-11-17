@@ -6,7 +6,7 @@ from smart_car_decision import stop_service
 
 
 def odom(age=.03, linear=0., angular=0.):
-    return {"ok": True, "odom_age_sec": age, "linear_speed": linear, "angular_speed": angular}
+    return {"ok": True, "odom_age_sec": age, "linear_speed": linear, "linear_speed_xy": abs(linear), "angular_speed": angular}
 
 
 def test_stationary_evidence_requires_fresh_post_confirmation_sample():

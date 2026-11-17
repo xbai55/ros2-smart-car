@@ -280,16 +280,21 @@ function NotificationCenter() {
   const open = uiStore.use().notificationsOpen;
   const session = useBusinessSession();
   const [items, setItems] = useState<NotificationItem[]>([]), [loading, setLoading] = useState(true), [error, setError] = useState('');
+  const [markingAll,setMarkingAll]=useState(false);
+  const readIds=useRef(new Set<string>()), account=useRef(session?.user.id);
+  account.current=session?.user.id;
   const [sound, setSound] = useState(false), [alert, setAlert] = useState<NotificationItem | null>(null);
   const audio = useRef<AudioContext | null>(null), soundRef = useRef(false);
   useEffect(() => { soundRef.current = sound; }, [sound]);
   useEffect(() => {
     let active = true, timer: ReturnType<typeof setTimeout>, seen: Set<string> | null = null;
+    readIds.current=new Set();setMarkingAll(false);
     setItems([]); setAlert(null); setError('');
     const poll = async () => {
       try {
-        const next = await adapters.listNotifications();
+        let next = await adapters.listNotifications();
         if (!active) return;
+        next=next.map(n=>readIds.current.has(n.id)?{...n,read:true}:n);
         const fresh = seen ? next.filter(n => !seen!.has(n.id) && n.type === 'incident' && !n.read) : [];
         seen = new Set(next.map(n => n.id));
         setItems(next); setError('');
@@ -313,6 +318,18 @@ function NotificationCenter() {
     try { audio.current ||= new AudioContext(); await audio.current.resume(); setSound(true); }
     catch { setError('浏览器未允许播放声音，请检查站点声音权限'); }
   }
+  async function markAllRead() {
+    if(markingAll)return;
+    const owner=session?.user.id;setMarkingAll(true);setError('');
+    try {
+      const result=await businessApi.markAllNotificationsRead();
+      if(account.current!==owner)return;
+      const ids=new Set(result.read_ids);for(const id of ids)readIds.current.add(id);
+      setItems(old=>old.map(n=>ids.has(n.id)?{...n,read:true}:n));
+      setAlert(old=>old&&ids.has(old.id)?null:old);
+    } catch(e) {if(account.current===owner)setError((e as Error).message);}
+    finally {if(account.current===owner)setMarkingAll(false);}
+  }
   const unread = items.filter((n) => !n.read).length;
 
   const iconFor = (type: NotificationItem["type"]) => (type === "incident" ? AlertTriangle : type === "task" ? ListChecks : ShieldCheck);
@@ -330,7 +347,7 @@ function NotificationCenter() {
           <div className="tool-backdrop" onClick={() => uiStore.set({ notificationsOpen: false })} />
           <div className="popover notification-popover">
             <header className="popover-head">
-              <strong>通知中心</strong>
+              <strong>通知中心</strong><button type="button" className="btn btn-outline" disabled={markingAll||loading||unread===0} onClick={()=>void markAllRead()}>{markingAll?"正在标记…":"全部已读"}</button>
               <span>{error || loading ? "—" : `${unread} 条未读`}</span>
             </header>
             <button className="btn btn-outline" onClick={() => void toggleSound()}>{sound ? '关闭报警声音' : '启用报警声音'}</button>

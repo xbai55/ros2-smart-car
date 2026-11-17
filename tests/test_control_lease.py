@@ -49,10 +49,11 @@ def test_manual_release_rejects_out_of_order_motion_and_allows_a_new_press():
     lease = ControlLease()
     claim = {**request(lease), "purpose": "manual"}
     assert lease.update(claim, 0, stationary=True)
+    claim.update(intent_seq=1, motion_epoch=lease.motion_epoch, command_deadline=1.7)
     assert lease.accepts_drive({**claim, "drive_seq": 2, "command": "stop"}, 1, "manual")
     assert not lease.accepts_drive({**claim, "drive_seq": 1, "command": "forward"}, 1.1, "manual")
     assert not lease.accepts_drive({**claim, "drive_seq": 3, "command": "forward"}, 1.2, "mapping")
-    assert lease.accepts_drive({**claim, "drive_seq": 3, "command": "forward"}, 1.2, "manual")
+    assert lease.accepts_drive({**claim, "intent_seq": 2, "drive_seq": 3, "command": "forward"}, 1.2, "manual")
     lease.revoke("operator_stop")
     assert not lease.accepts_drive({**claim, "drive_seq": 4}, 1.3, "manual")
 

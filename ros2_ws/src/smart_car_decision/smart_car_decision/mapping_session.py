@@ -142,14 +142,17 @@ def slam_process_ids(proc_root=Path("/proc")):
 
 
 class MappingRestartManager:
-    def __init__(self, logger, map_snapshot, *, ros_now_ns=None, settings=None, recorder=None, capture_initial_inputs=None):
+    def __init__(self, logger, map_snapshot, *, ros_now_ns=None, settings=None, recorder=None, capture_initial_inputs=None, on_failure=None):
         self._logger = logger
         self.settings = settings or MappingSettings()
         self.recorder = recorder
         self.capture_initial_inputs = capture_initial_inputs
+        self.on_failure = on_failure
         self._map_snapshot = map_snapshot
         self._ros_now_ns = ros_now_ns or (lambda: time.time_ns())
         self._lock = threading.RLock()
+        self._operation_lock = threading.Lock()
+        self._generation = 0
         self._process = None
         self._closed = False
         self._frozen = False
@@ -160,71 +163,120 @@ class MappingRestartManager:
         self._state = {"session_id": map_snapshot.session_id, "state": "idle", "started_at": None, "error": None}
         self._log_file = Path("/tmp/smart_car_slam_restart.log")
 
-    def restart(self):
-        with self._lock:
-            if self._closed:
-                raise RuntimeError("Web 节点正在关闭，无法重新建图")
-            self._frozen = False
-            self._state = {"session_id": uuid.uuid4().hex, "state": "starting", "started_at": time.time(), "error": None}
-            self._started_monotonic = time.monotonic()
-            self._map_snapshot.begin_session(self._state["session_id"], self._ros_now_ns())
-            try:
-                self._stop_existing_slam()
-                active_settings = self.settings.snapshot()
-                self._state["max_laser_range"] = active_settings["max_laser_range"]
-                if self.recorder:
-                    self.recorder.start(self._state["session_id"], active_settings)
-                    self._log_file = self.recorder.directory / "slam.log"
-                    if self.capture_initial_inputs:
-                        self.capture_initial_inputs()
-                self._map_snapshot.begin_session(self._state["session_id"], self._ros_now_ns())
+    def restart(self, validate_start=None):
+        if not self._operation_lock.acquire(blocking=False):
+            raise RuntimeError('建图启动或收尾正在进行，请稍后重试')
+        generation = None
+        def checkpoint(phase):
+            with self._lock:
+                if self._closed or self._frozen or generation != self._generation:
+                    raise RuntimeError('建图启动已取消')
+                self._state['startup_phase'] = phase
+            if validate_start:
+                validate_start()
+            self._logger.info(f'建图启动阶段 {phase}，耗时 {time.monotonic()-self._started_monotonic:.2f}s')
+            if self.recorder and self.recorder.snapshot().get('session_id') == self._state['session_id']:
+                self.recorder.event('startup_phase', phase=phase,
+                                    elapsed_sec=round(time.monotonic()-self._started_monotonic, 3))
+        try:
+            with self._lock:
+                if self._closed:
+                    raise RuntimeError('Web 节点正在关闭，无法重新建图')
+                self._generation += 1
+                generation = self._generation
+                self._frozen = False
+                self._state = {'session_id': uuid.uuid4().hex, 'state': 'starting',
+                               'started_at': time.time(), 'error': None}
+                self._started_monotonic = time.monotonic()
+                self._map_snapshot.begin_session(self._state['session_id'], self._ros_now_ns())
+            # Process waits use the operation lock, never the callback/status lock.
+            checkpoint('stop_previous')
+            self._stop_existing_slam()
+            active_settings = self.settings.snapshot()
+            with self._lock:
+                self._state['max_laser_range'] = active_settings['max_laser_range']
+            checkpoint('recording_start')
+            if self.recorder:
+                self.recorder.start(self._state['session_id'], active_settings)
+                self._log_file = self.recorder.directory / 'slam.log'
+                checkpoint('initial_controls')
+                if self.capture_initial_inputs:
+                    self.capture_initial_inputs()
+            checkpoint('slam_start')
+            with self._lock:
+                self._map_snapshot.begin_session(self._state['session_id'], self._ros_now_ns())
                 self._ready_after_wall = time.time()
                 self._status_received_at = None
                 self._status = {}
-                self._process = self._start_slam()
-                if self._process.poll() is not None:
-                    raise RuntimeError(f"SLAM 启动失败（退出码 {self._process.returncode}）{self._log_tail()}")
-                self._state["state"] = "waiting_map"
-            except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
-                if self.recorder:
-                    self.recorder.stop("slam_start_failed", error=str(exc))
-                self._state.update(state="error", error=str(exc))
-                self._logger.error(str(exc))
-                raise RuntimeError(str(exc)) from exc
-            return {"ok": True, "pid": self._process.pid, "message": "slam_toolbox restarted",
-                    "session_id": self._state["session_id"], "mapping": dict(self._state)}
+            self._process = self._start_slam()
+            checkpoint('waiting_map')
+            if self._process.poll() is not None:
+                raise RuntimeError(f'SLAM 启动失败（退出码 {self._process.returncode}）{self._log_tail()}')
+            with self._lock:
+                self._state['state'] = 'waiting_map'
+                return {'ok': True, 'pid': self._process.pid, 'message': 'slam_toolbox restarted',
+                        'session_id': self._state['session_id'], 'mapping': dict(self._state)}
+        except Exception as exc:
+            self._stop_owned_slam()
+            if self.recorder:
+                self.recorder.stop('slam_start_failed', error=str(exc))
+            with self._lock:
+                if generation == self._generation:
+                    self._frozen = True
+                    self._state.update(state='error', error=str(exc))
+            self._logger.error(str(exc))
+            if self.on_failure:
+                self.on_failure()
+            raise RuntimeError(str(exc)) from exc
+        finally:
+            self._operation_lock.release()
 
     def stop_mapping(self):
-        """End mapping while retaining the last accepted grid for saving."""
+        """Invalidate immediately; a startup worker owns its own eventual cleanup."""
         with self._lock:
-            # Reject queued SLAM messages as well as future publications.
+            self._generation += 1
             self._frozen = True
-            self._state.update(state="idle", error=None)
-            try:
-                self._stop_existing_slam()
-            except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            if self._state['state'] != 'error':
+                self._state.update(state='idle', error=None)
+        if not self._operation_lock.acquire(blocking=False):
+            if self.recorder and hasattr(self.recorder, 'cancel_start'):
+                self.recorder.cancel_start()
+            return
+        try:
+            self._stop_existing_slam()
+            if self.recorder:
+                self.recorder.stop('mode_exit')
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            with self._lock:
                 self._state.update(state="error", error=str(exc))
-                raise
-            finally:
-                if self.recorder:
-                    self.recorder.stop("mode_exit")
+            raise
+        finally:
+            self._operation_lock.release()
 
     def stop_for_navigation(self):
-        with self._lock:
+        self.stop_mapping()
+        if not self._operation_lock.acquire(blocking=False):
+            raise RuntimeError('建图启动正在取消，请等待收尾后再导航')
+        try:
             if self.recorder:
                 self.recorder.stop("navigation")
             self._stop_existing_slam()
-            self._frozen = False
-            session = uuid.uuid4().hex
-            self._map_snapshot.begin_session(session, None)
-            self._state = {"session_id": session, "state": "idle", "started_at": None, "error": None}
+            with self._lock:
+                self._frozen = False
+                session = uuid.uuid4().hex
+                self._map_snapshot.begin_session(session, None)
+                self._state = {"session_id": session, "state": "idle", "started_at": None, "error": None}
+        finally:
+            self._operation_lock.release()
 
     def observe_status(self, snapshot):
         if not self._lock.acquire(blocking=False):
             return False
         try:
             self._status = copy.deepcopy(_object(snapshot))
-            if self.recorder:
+            if self._state['state'] in {'waiting_map', 'ready'} and self._status.get('mode') not in {None, 'mapping'}:
+                self._fail('建图模式已退出，已停止本轮建图')
+            if self.recorder and self._state['state'] != 'error':
                 self.recorder.append_status(self._status)
             self._status_received_at = time.monotonic()
             self._refresh_state()
@@ -247,7 +299,10 @@ class MappingRestartManager:
 
     def snapshot(self):
         if not self._lock.acquire(blocking=False):
-            return {**dict(self._state), 'status_refresh_pending': True}
+            result = {**dict(self._state), 'status_refresh_pending': True}
+            if self.recorder:
+                result['recording'] = self.recorder.snapshot()
+            return result
         try:
             self._refresh_state()
             result = dict(self._state)
@@ -295,18 +350,33 @@ class MappingRestartManager:
         if self.recorder:
             recording = self.recorder.snapshot()
             if self._state["state"] in {"waiting_map", "ready"} and recording["state"] == "error":
-                self._state.update(state="error", error=recording["error"])
+                self._fail(recording['error'])
                 return
         if self._process is not None and self._process.poll() is not None:
-            if self.recorder:
-                self.recorder.stop("slam_exited", error="SLAM 进程意外退出")
-            self._state.update(state="error", error=f"SLAM 进程退出（退出码 {self._process.returncode}）{self._log_tail()}")
+            self._fail(f"SLAM 进程退出（退出码 {self._process.returncode}）{self._log_tail()}")
             return
         missing = self._missing_inputs()
         if not missing:
             self._state.update(state="ready", error=None)
         elif self._state["state"] == "waiting_map" and self._started_monotonic is not None and time.monotonic() - self._started_monotonic >= 15:
-            self._state.update(state="error", error=f"建图启动超过 15 秒，缺少：{', '.join(missing)}{self._log_tail()}")
+            self._fail(f"建图启动超过 15 秒，缺少：{', '.join(missing)}{self._log_tail()}")
+
+    def _fail(self, error):
+        self._state.update(state='error', error=error)
+        self._frozen = True
+        self._generation += 1
+        failed_generation = self._generation
+        def cleanup():
+            with self._operation_lock:
+                with self._lock:
+                    if self._generation != failed_generation:
+                        return
+                if self.on_failure:
+                    self.on_failure()
+                self._stop_owned_slam()
+                if self.recorder:
+                    self.recorder.stop('mapping_failed', error=error)
+        threading.Thread(target=cleanup, daemon=True).start()
 
     def _log_tail(self):
         try:
@@ -320,10 +390,20 @@ class MappingRestartManager:
         """Reap only this manager's detached launch group during Web shutdown."""
         with self._lock:
             self._closed = True
+            self._frozen = True
+            self._generation += 1
+        if not self._operation_lock.acquire(blocking=False):
+            if self.recorder and hasattr(self.recorder, 'cancel_start'):
+                self.recorder.cancel_start()
+            return
+        try:
             self._stop_owned_slam()
             if self.recorder:
-                self.recorder.stop("shutdown")
-            self._state.update(state="idle", error=None)
+                self.recorder.stop('shutdown')
+            with self._lock:
+                self._state.update(state='idle', error=None)
+        finally:
+            self._operation_lock.release()
 
     def _stop_owned_slam(self):
         process = self._process
