@@ -28,6 +28,8 @@ async def wait_future(future, timeout=ACTION_WAIT):
 class NavigationBridge:
     def __init__(self, node, radius=.25):
         self.node, self.radius = node, radius
+        from .nav2_obstacles import Nav2Obstacles
+        self.dynamic_obstacles = Nav2Obstacles(node)
         self.planner = ActionClient(node, ComputePathToPose, "/compute_path_to_pose")
         self.navigator = ActionClient(node, NavigateToPose, "/navigate_to_pose")
         self.lock = threading.RLock()
@@ -78,6 +80,7 @@ class NavigationBridge:
     def snapshot(self):
         with self.lock:
             state = copy.deepcopy(self.state)
+        state["dynamic_avoidance"] = self.dynamic_obstacles.snapshot()
         error = self._health()
         state["ready"] = not error
         if error and state["state"] not in {"running", "starting", "failed"}:
@@ -85,6 +88,8 @@ class NavigationBridge:
         service=getattr(self.node,'avoidance_service',None)
         if service is not None and state['state'] in {'starting','running'}:
             reasons=service.snapshot().get('output',{}).get('reasons',[])
+            if any(r in reasons for r in ('avoidance_braking','avoidance_blocked','avoidance_waiting_observation')):
+                state['message'] = '雷达近障制动中，障碍消失后继续导航'
             if 'navigation_waiting_command' in reasons:
                 state.update(message='等待本轮导航的首条速度指令，小车保持停车',
                              start_phase='waiting_command',elapsed_sec=max(0.,time.monotonic()-self.started_at),
@@ -103,7 +108,14 @@ class NavigationBridge:
 
     async def plan(self, payload, *, preview_epoch=None):
         deadline=time.monotonic()+ACTION_WAIT
+        service = getattr(self.node, 'avoidance_service', None)
+        enabled = bool(service and service.snapshot().get('settings', {}).get('enabled'))
+        await self.dynamic_obstacles.apply(enabled, lambda future: wait_future(future, max(0., deadline-time.monotonic())))
         with self.lock:
+            service = getattr(self.node, 'avoidance_service', None)
+            requested = bool(service and service.snapshot().get('settings', {}).get('enabled'))
+            if self.dynamic_obstacles.applied is not requested:
+                raise RuntimeError('主动避障设置未应用，请重新预览')
             error = self._health()
             if error:
                 raise RuntimeError(error)
@@ -158,7 +170,7 @@ class NavigationBridge:
             now = time.monotonic()
             self.plans = {i: p for i, p in self.plans.items() if now - p["created"] < 60}
             self.plans[plan_id] = {**plan, "created": now, "calibration_matrix": calibration_matrix,
-                                   "calibration_drawing": calibration_drawing, "preview_epoch": preview_epoch}
+                                   "calibration_drawing": calibration_drawing, "preview_epoch": preview_epoch, "dynamic_avoidance": enabled}
         return plan
 
     async def start(self, payload, guard=None):
@@ -173,6 +185,10 @@ class NavigationBridge:
                 raise RuntimeError("任务已取消，不再派发目标")
             if self.state["state"] in {"starting", "running"}:
                 raise RuntimeError("小车正在导航，请先停止当前导航")
+            service = getattr(self.node, 'avoidance_service', None)
+            enabled = bool(service and service.snapshot().get('settings', {}).get('enabled'))
+            if self.dynamic_obstacles.applied is not enabled:
+                raise RuntimeError('主动避障设置已变化，请重新预览')
             plan = self.plans.get(payload.get("plan_id"))
             if not plan or time.monotonic() - plan["created"] > 60:
                 raise ValueError("路线预览已过期，请重新规划")
@@ -300,7 +316,9 @@ class NavigationBridge:
                     service=getattr(self.node,'avoidance_service',None)
                     reason=service.snapshot().get('interruption_reason') if service else None
                     message={'navigation_start_timeout':'等待首条导航指令超时，已停车，请检查规划与控制服务',
-                             'navigation_command_timeout':'导航速度指令中断，已停车，需重新预览后启动'}.get(reason,'控制租约已失效，独立导航已停止')
+                             'navigation_command_timeout':'导航速度指令中断，已停车，需重新预览后启动',
+                             'avoidance_sensor_fault':'雷达、变换或速度证据故障，导航已停止',
+                             'navigation_obstacle_timeout':'障碍持续阻挡，导航已停止，请检查环境后重新预览'}.get(reason,'控制租约已失效，独立导航已停止')
                     self.cancel(message, failed=True)
                     return
             error = self._health()

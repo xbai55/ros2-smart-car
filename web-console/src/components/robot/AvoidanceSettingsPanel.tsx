@@ -13,27 +13,21 @@ export function AvoidanceSettingsPanel({ connected }: { connected: boolean }) {
   const editable = connected && supported && robot.status.mode === 'stop' && !robot.pending;
   const valid = distance.trim() !== '' && Number.isFinite(Number(distance)) && Number(distance) >= .4 && Number(distance) <= 1.5;
   const enabled = settings?.enabled === true;
-  const full = value?.settings.protection_mode === 'full';
-  const profileSupported = value?.protection_supported === true;
   const actualEnabled = value?.confirmed && value.settings.enabled;
-  const actualMode = value?.confirmed && profileSupported ? full ? '完整防护' : '基础防护' : '等待车端确认';
-  return <section className="motion-setting" aria-label="运动防护设置">
-    <div className="setting-title"><ShieldCheck size={16}/><strong>运动防护</strong><span>{actualMode}</span></div>
-    <button type="button" role="switch" aria-label="完整防护模式" aria-checked={full && !!value?.confirmed}
-      disabled={!editable || !profileSupported || !!value?.recovery_required}
-      onClick={() => void robot.setAvoidance({protection_mode: full ? 'basic' : 'full'})}>
-      {full ? '切换为基础防护' : '开启完整防护模式'}</button>
-    <p className="setting-note">基础模式仅按实际测得的障碍距离防撞，正常采样缺口不锁车；急停、松手、断连、指令过期停车和限速保留。雷达整体失联或没有有效测距时仍会停车。完整模式另检查观测覆盖与位姿。</p>
-    {!profileSupported && connected && <p className="setting-note">车端尚未确认支持防护模式，请更新车端后再设置。</p>}
+  const applied = robot.status.navigation.dynamic_avoidance;
+  return <section className="motion-setting" aria-label="主动避障设置">
+    <div className="setting-title"><ShieldCheck size={16}/><strong>运动防护</strong><span>雷达防撞与停车保护</span></div>
     {value?.recovery_required && <button type="button" disabled={!editable || !value.motion_epoch}
       onClick={() => value.motion_epoch && void robot.setAvoidance({acknowledge: value.motion_epoch})}>确认故障恢复（须先停车）</button>}
     {value?.output && <p className="setting-note" role="status">{value.output.allowed ? '最终速度已放行' : `当前未输出运动：${value.output.reasons.map(protectionReason).join('、') || '等待新的驾驶操作'}`}。{value.output.recovery}</p>}
     {value?.config_rejection && <p className="setting-note" role="alert">设置未更改：{value.config_rejection}</p>}
     {value?.scan_fault && <p className="setting-note">雷达链路：{protectionReason(value.scan_fault)}</p>}
     {value?.velocity && <p className="setting-note">底盘速度证据：{value.velocity.ok ? '有效' : '无效或过期'}，年龄 {value.velocity.age_sec?.toFixed(3) ?? '—'} 秒。</p>}
-    <div className="setting-title"><ShieldCheck size={16}/><strong>主动绕行</strong><span>{!connected ? '未连接' : !supported ? '车端不支持' : !value?.confirmed ? '等待确认' : actualEnabled ? '已开启' : '已关闭'}</span></div>
-    <div className="setting-presets"><button type="button" role="switch" aria-label="主动避障开关" aria-checked={!!actualEnabled} disabled={!editable || !!value?.recovery_required} onClick={() => void robot.setAvoidance({ enabled: !enabled })}>{enabled ? '关闭主动绕行' : '开启主动绕行'}</button></div>
-    <label>触发距离（距车体前缘，米）</label>
+    <div className="setting-title"><ShieldCheck size={16}/><strong>主动避障</strong><span>{!connected ? '未连接' : !supported ? '车端不支持' : !value?.confirmed ? '等待确认' : actualEnabled ? '已开启' : '已关闭'}</span></div>
+    <div className="setting-presets"><button type="button" role="switch" aria-label="主动避障开关" aria-checked={!!actualEnabled} disabled={!editable || !!value?.recovery_required} onClick={() => void robot.setAvoidance({ enabled: !enabled, protection_mode: "basic" })}>{enabled ? '关闭主动避障' : '开启主动避障'}</button></div>
+    <p className="setting-note">开关在下一次路线预览时应用到 Nav2。关闭：静态地图规划，遇动态近障停车；开启：雷达障碍层参与规划并绕行，障碍消失后继续。急停、失联、限速和近障停车始终保留。</p>
+    <p className="setting-note" role="status">Nav2 实际状态：{applied?.enabled == null ? '等待路线预览确认' : applied.enabled ? '动态避障已开启' : '动态避障已关闭'}。{applied?.message}</p>
+    <label>本地绕行触发距离（距车体前缘，米）</label>
     <div className="threshold-editor"><input aria-label="主动避障触发距离" type="number" min={.4} max={1.5} step={.05} value={distance} disabled={!editable || !!value?.recovery_required} onChange={e => setDistance(e.target.value)}/><button type="button" className="setting-apply" disabled={!editable || !valid} onClick={() => void robot.setAvoidance({ trigger_distance_m: Number(distance) })}>应用距离</button></div>
     <p className="live-helper" role="status">{!connected ? '等待小车连接' : !supported ? '请更新车端以使用主动避障' : `${labels[value!.state] ?? value!.state}${value?.direction ? value.direction === 'left' ? ' · 左侧' : ' · 右侧' : ''} · ${value!.reason}`}</p>
     {connected && supported && value?.confirmed && !value.available && !value.recovery_required && <p className="setting-note">传感器尚未就绪，运动将被拦截。</p>}
@@ -42,7 +36,6 @@ export function AvoidanceSettingsPanel({ connected }: { connected: boolean }) {
     {connected && value?.missing_data_policy?.mode==='assume_clear' && <p className="setting-note">无回波按空旷处理：{value.missing_data_policy.active ? `已生效，本帧 ${value.assumed_clear?.rays??0} 个缺测方向按空旷处理` : '等待扫描条件满足'}。这是操作者指定的假设，不代表雷达已确认空旷；真实障碍和设备故障仍会停车。</p>}
     {connected && !value?.missing_data_policy?.active && value?.sampling_gap_inferred && <p className="setting-note">小采样间隙推断：{value.sampling_gap_inferred.rays} 条射线，距离上限 {value.sampling_gap_inferred.distance_cap_min_m.toFixed(2)}～{value.sampling_gap_inferred.distance_cap_max_m.toFixed(2)} m，超过上限仍未知。</p>}
     {connected && value?.scan_health && <p className="setting-note">有效点 {((value.scan_health.valid_ratio??0)*100).toFixed(0)}%，扫描 {value.scan_health.scan_rate_hz?.toFixed(1)??'—'} Hz，连续健康 {value.scan_health.consecutive_healthy??0} 帧。</p>}
-    <p className="setting-note">基础防撞缓冲 5 cm；制动距离、数据延迟及更大的模式距离设置仍会增加保护范围。导航由 Nav2 绕行；关闭主动绕行仍保留防撞停车。本地绕行规划需要有效里程计位姿；基础直行不依赖全局位姿。</p>
-    <p className="setting-note">通道足够时约为原速度的 80%，最高 0.25 m/s；转向与近障时减速。</p>
+    <p className="setting-note">车体尺寸与 5 cm 基础净空保持不变，制动距离和观测延迟参与近障检查。导航绕行由 Nav2 执行，本地绕行距离设置用于非导航驾驶。</p>
   </section>;
 }

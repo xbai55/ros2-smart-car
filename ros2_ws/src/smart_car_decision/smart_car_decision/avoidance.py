@@ -354,7 +354,7 @@ class AvoidanceController:
             cx, cy, cw = vx * factor, vy * factor, w * factor
             speed = max(self.actual_speed, math.hypot(cx, cy))
             envelope = radius + speed * self.scan_age + speed ** 2 / .6
-            duration = max(1., .6 + speed / .3)
+            duration = max(1., .6 + speed / .3, getattr(self, "guard_angular_speed", 0.) / .3)
             x = y = yaw = 0.0
             rotating = abs(cw) > 1e-6
             if self.footprint is not None:

@@ -54,5 +54,7 @@ class LeaseBridge:
             value = self.snapshot()
             if value.get("fresh") and value.get("last_request_id") == ident:
                 return {"confirmed": True, "lease": value}
+            if value.get("fresh") and value.get("rejected_request_id") == ident:
+                return {"confirmed": True, "reason": "controller_lease_rejected", "lease": value}
             await self.sleep(.02)
         return {"confirmed": False, "reason": "controller_response_unconfirmed", "lease": self.snapshot()}

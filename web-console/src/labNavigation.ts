@@ -17,6 +17,7 @@ export function validImagePoint(p: Point, drawing: DrawingDescriptor) {
   return Number.isFinite(p.x) && Number.isFinite(p.y) && p.x >= 0 && p.y >= 0 && p.x < drawing.width && p.y < drawing.height;
 }
 export type NavigationState = {
+  dynamic_avoidance?: { enabled: boolean | null; message: string };
   ready: boolean; state: "idle" | "planning" | "preview" | "starting" | "running" | "succeeded" | "canceled" | "failed";
   message: string; goal_id: string | null; goal: Pose | null; path: Point[];
   distance_remaining: number | null; estimated_time_remaining: number | null;

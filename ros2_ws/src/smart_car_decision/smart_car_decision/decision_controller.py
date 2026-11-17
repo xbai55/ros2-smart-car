@@ -553,6 +553,7 @@ class DecisionController(Node):
             self.last_navigation_time = 0.0
             self.navigation_started_at = time.monotonic()
             self.navigation_received = False
+            self.navigation_obstacle_since = None
             self.operator_stop = False
             self.avoidance.reset()
             if next_mode in self.follow_targets:
@@ -677,7 +678,7 @@ class DecisionController(Node):
             planner_ready = (self.pose is not None and self.evidence_pose is not None and 0 <= now-self.odom_at <= .5)
             planning = active_path or (planner_ready and motion['linear_x'] > 0 and clearance is not None
                                        and clearance <= self.avoidance.settings['trigger_distance_m'])
-        local = not full and not planning
+        local = self.mode == "navigation" or (not full and not planning)
         if avoidance_input and getattr(self, 'recovery_required', False):
             reasons.append('recovery_confirmation_required')
             motion = dict(ZERO)
@@ -686,12 +687,15 @@ class DecisionController(Node):
             motion = self.avoidance.stop('waiting', '等待控制器确认防护设置')
         elif local and avoidance_input:
             v = self.velocity_status(now)
-            history = list(getattr(self, 'velocity_history', ())) + list(getattr(self, 'motion_history', ()))
+            history = list(getattr(self, 'velocity_history', ()))
+            if self.mode != 'navigation':
+                history += list(getattr(self, 'motion_history', ()))
             speed = max([v['linear_speed_xy'] or 0.] + [x[1] for x in history if now-x[0] <= 1.1])
             angular = max([abs(v['angular_speed'] or 0.)] + [x[2] for x in history if now-x[0] <= 1.1])
             motion = local_guard(self.avoidance, motion, evidence=self.scan_evidence,
                                  scan_age=now-self.evidence_at, speed=speed, angular=angular,
-                                 velocity_age=now-getattr(self, 'velocity_at', self.odom_at) if v['ok'] else math.inf)
+                                 velocity_age=now-getattr(self, 'velocity_at', self.odom_at) if v['ok'] else math.inf,
+                                 navigation=self.mode == 'navigation')
         else:
             if getattr(self, 'scan_fault', None):
                 evidence = None
@@ -704,7 +708,18 @@ class DecisionController(Node):
         if avoidance_input and not any(motion.values()):
             reasons.append('avoidance_' + self.avoidance.state)
             if self.avoidance.state in {'sensor_fault', 'blocked', 'timeout', 'waiting_observation', 'braking', 'waiting'}:
-                self.interrupt_intent(reasons[-1])
+                if self.mode == 'navigation' and self.avoidance.state in {'blocked', 'braking', 'waiting_observation'}:
+                    if getattr(self, 'navigation_obstacle_since', None) is None:
+                        self.navigation_obstacle_since = now
+                    self.interruption_reason = reasons[-1]
+                else:
+                    self.interrupt_intent(reasons[-1])
+        if self.mode != 'navigation' or any(motion.values()):
+            self.navigation_obstacle_since = None
+            if self.mode == 'navigation': self.interruption_reason = None
+        elif getattr(self, 'navigation_obstacle_since', None) is not None and now-self.navigation_obstacle_since >= 20.:
+            self.interrupt_intent('navigation_obstacle_timeout')
+            self.navigation_obstacle_since = None
         # The final gate also prevents avoidance manoeuvres continuing after expiry.
         if lease_blocked:
             if reasons is not None and any(motion.values()):

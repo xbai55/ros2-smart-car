@@ -142,3 +142,26 @@ test("robot API posts per-mode obstacle stop distance payloads", async () => {
   assert.equal(calls[0].url, "/api/mode-obstacle-stop-distance");
   assert.deepEqual(JSON.parse(String(calls[0].init?.body)), { mode: "mapping", distance: 0.6 });
 });
+
+test("navigation preview drains old driving requests and fences delayed stops", async () => {
+  const calls: string[] = [];
+  let complete!: (r: Response) => void;
+  const api = createRobotApi(async (url, init) => {
+    calls.push(String(url));
+    if(String(url).endsWith('/mode')) return Response.json({drive_id:'old'});
+    if(String(url).endsWith('/command')) return new Promise<Response>(resolve=>{complete=resolve;});
+    return Response.json({plan_id:'plan'});
+  });
+  await api.setMode('manual');
+  const driving=api.sendCommand('forward');
+  const preview=api.planNavigation({x:0,y:0,yaw:0},'map',[]);
+  await api.sendCommand('stop');
+  assert.equal(calls.filter(x=>x.endsWith('/command')).length,1);
+  assert.equal(calls.some(x=>x.endsWith('/plan')),false);
+  complete(Response.json({ok:true}));
+  await driving; await preview;
+  await api.sendCommand('stop');
+  await api.startNavigation('plan');
+  assert.equal(calls.filter(x=>x.endsWith('/command')).length,1);
+  assert.equal(calls.at(-1),'/api/navigation/start');
+});

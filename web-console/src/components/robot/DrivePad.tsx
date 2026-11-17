@@ -9,7 +9,7 @@ const commands = [
   {id:"backward",label:"后退",key:"S / ↓",icon:ArrowDown},
 ];
 export function DrivePad({ robotId = LIVE_ROBOT_ID, disabled = false }: {robotId?:string; disabled?:boolean}) {
-  const { status, connection, pending, sendCommand } = useRobotStream();
+  const { status, connection, pending, sendCommand, api } = useRobotStream();
   const enabled = canDrive(status, connection === "connected", robotId) && !pending && !disabled;
   const [active, setActive] = useState<string|null>(null);
   const controller = useRef<DriveHoldController|null>(null);
@@ -26,7 +26,7 @@ export function DrivePad({ robotId = LIVE_ROBOT_ID, disabled = false }: {robotId
     const keyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const command = driveKeyCommand(event, !!target?.closest(DRIVE_PROTECTED_TARGETS));
-      if(command === "stop") { event.preventDefault(); controller.current?.stop(true); return; }
+      if(command === "stop") { event.preventDefault(); controller.current?.stop(); void api.cancelNavigation().catch(() => false); return; }
       if(enabled && command) { event.preventDefault(); if(!event.repeat) controller.current?.start(command); }
     };
     const keyUp = (event: KeyboardEvent) => { const key = event.key.length === 1 ? event.key.toLowerCase() : event.key; if(DRIVE_KEYS[key]) stop(); };
@@ -34,21 +34,21 @@ export function DrivePad({ robotId = LIVE_ROBOT_ID, disabled = false }: {robotId
     window.addEventListener("keydown",keyDown); window.addEventListener("keyup",keyUp);
     document.addEventListener("focusin",focusIn);
     return () => { unbind(); window.removeEventListener("keydown",keyDown); window.removeEventListener("keyup",keyUp); document.removeEventListener("focusin",focusIn); };
-  }, [enabled]);
+  }, [enabled, status.mode, api]);
   return <div className="live-drive" ref={focusTarget} tabIndex={-1} aria-label="键盘驾驶控制区">
     <div className="live-drive-heading"><strong>手动驾驶</strong><span>{active ? "正在行驶" : "按住行驶 · 松开停止"}</span></div>
     <button className="btn btn-outline" type="button" disabled={!enabled} onClick={() => focusTarget.current?.focus()}>点击此处使用键盘驾驶</button>
     <p className="live-helper">方向键 / WASD 驾驶，Q / E 转向，空格停止；Alt＋方向键平移地图。输入或调整滑条时暂停快捷键。</p>
     {status.avoidance?.confirmed && status.avoidance.protection_supported && <p className="live-helper" role="status">
-      {status.avoidance.settings.protection_mode === 'full' ? '完整防护' : '基础防护'} · 主动绕行{status.avoidance.settings.enabled ? '开启' : '关闭'} ·
+      雷达防撞 · 主动避障{status.avoidance.settings.enabled ? '开启' : '关闭'} ·
       {status.avoidance.output?.allowed ? '最终速度已放行' : status.avoidance.recovery_required ? '请停车并在设置中确认故障恢复' : status.avoidance.interruption_reason ? '已安全停车，条件恢复后松开再按' : '按住驾驶，松开停车'}
     </p>}
     <div className="live-drive-pad">
       {commands.map(({id,label,key,icon:Icon})=><button key={id} type="button" className={cn("live-drive-button",id==="stop"&&"stop",id==="backward"&&"backward",active===id&&"pressed")}
         disabled={id==="stop" ? connection!=="connected" || robotId!==LIVE_ROBOT_ID : !enabled} aria-label={label}
-        onPointerDown={e=>{if(e.button!==0)return;e.preventDefault();e.currentTarget.setPointerCapture(e.pointerId);controller.current?.start(id);}}
+        onPointerDown={e=>{if(e.button!==0)return;e.preventDefault();e.currentTarget.setPointerCapture(e.pointerId);if(id === "stop") { controller.current?.stop(); void api.cancelNavigation().catch(() => false); } else controller.current?.start(id);}}
         onPointerUp={()=>controller.current?.stop()} onPointerCancel={()=>controller.current?.stop()} onLostPointerCapture={()=>controller.current?.stop()}
-        onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();if(!e.repeat)controller.current?.start(id);}}}
+        onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();if(!e.repeat)if(id === "stop") { controller.current?.stop(); void api.cancelNavigation().catch(() => false); } else controller.current?.start(id);}}}
         onKeyUp={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();controller.current?.stop();}}}>
         <Icon size={22}/><strong>{label}</strong><small>{key}</small>
       </button>)}

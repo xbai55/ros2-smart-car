@@ -17,7 +17,7 @@ from ...services.capabilities import capability_snapshot
 from ...services.robot_context import robot_context_service
 from ...services.search_execution import execute_search
 from ...services.windows_credentials import machine_token
-from ...services.direct_navigation import register_preview, start_direct_navigation
+from ...services.direct_navigation import register_preview, start_direct_navigation, prepare_navigation_preview
 from ...services.operator_control import DRIVE_COMMANDS, select_operator_mode, send_drive
 from ...services.control_leases import control_lease_manager
 from .robots import revoke_host_execution, robot_stop
@@ -215,6 +215,12 @@ async def vehicle_write(path: str, request: Request, db: Session = Depends(get_d
                      after={"run_id": result["run_id"], "state": result["state"]})
         db.commit()
         return result
+    if path == "navigation/plan":
+        if request.method != "POST":
+            raise HTTPException(405, "导航预览须使用 POST")
+        async def stop_for_preview():
+            return await robot_stop(robot_id, db, user)
+        return await prepare_navigation_preview(db, (robot_id, address), user, payload, stop_for_preview)
     gateway = get_robot_gateway(address)
     if not gateway.base_url:
         raise HTTPException(503, "未配置车端地址")

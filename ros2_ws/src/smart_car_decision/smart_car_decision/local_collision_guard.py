@@ -39,7 +39,7 @@ def distance_scan_ready(evidence):
     return valid >= max(3, math.ceil(len(evidence.rays) * .05))
 
 
-def local_guard(controller, motion, *, evidence, scan_age, speed, angular, velocity_age):
+def local_guard(controller, motion, *, evidence, scan_age, speed, angular, velocity_age, navigation=False):
     """Reuse the swept geometry, adding bounds for scan/body-frame drift.
 
     Linear deceleration .3 m/s² retains the existing guard's model. Angular
@@ -70,7 +70,10 @@ def local_guard(controller, motion, *, evidence, scan_age, speed, angular, veloc
     # Rotation affects the whole commanded sweep, including its translated end,
     # not only the body at the scan origin. The chord bounds all intermediate
     # rotations; cap at pi, where the largest possible displacement is 2*r.
-    angle = min(math.pi, angular_bound * scan_age + angular_bound * angular_bound / .6)
+    # Navigation already checks future rotation in guard(). Only compensate
+    # measured rotation since the scan; do not add commanded rotation twice.
+    angle = min(math.pi, abs(angular) * scan_age) if navigation else min(math.pi, angular_bound * scan_age + angular_bound * angular_bound / .6)
+    controller.guard_angular_speed = abs(angular) if navigation else 0.
     drift = 2 * sweep_extent * math.sin(angle / 2)
     controller.actual_speed, controller.scan_age = speed, scan_age
     controller.state, controller.reason = 'idle', '基础防护：仅按实际测距防撞'

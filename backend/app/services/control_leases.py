@@ -43,9 +43,10 @@ class ControlLeaseManager:
         self.current = None
         self.generation = 0
         self.acquiring = False
+        self.preparing_navigation = False
 
     async def acquire(self, robot_id, address, user_id, permissions, expected, *, run_id=None, purpose="navigation", forward_limit_mps=None):
-        if self.current or self.acquiring:
+        if self.current or self.acquiring or self.preparing_navigation:
             raise RuntimeError("已有控制租约，请先停止或接管")
         lease = HeldLease(robot_id, address, user_id, frozenset(permissions),
                           expected["controller_id"], expected["control_epoch"], uuid4().hex, run_id=run_id, purpose=purpose,
@@ -59,7 +60,7 @@ class ControlLeaseManager:
             result = await get_robot_gateway(address).control_lease(lease.request("acquire"))
             if generation != self.generation or not self.matches(result, lease):
                 await self.stop_remote(lease)
-                raise RuntimeError("控制器未确认租约或停止已发生")
+                raise RuntimeError("控制器回执超时，请重新预览" if result.get("confirmed") is not True else "租约被拒绝或控制代次已变化，请重新预览")
             lease.motion_epoch = (result.get("lease") or {}).get("motion_epoch")
             lease.command_valid_until = (result.get("lease") or {}).get("command_valid_until")
             self.current = lease
@@ -73,7 +74,8 @@ class ControlLeaseManager:
     @staticmethod
     def matches(result, lease):
         ack = result.get("lease") or {}
-        return (result.get("confirmed") is True and ack.get("fresh") is True
+        return (result.get("confirmed") is True and result.get("reason") != "controller_lease_rejected"
+                and ack.get("fresh") is True
                 and ack.get("blocked") is False and ack.get("controller_id") == lease.controller_id
                 and ack.get("control_epoch") == lease.control_epoch and ack.get("owner") == lease.owner
                 and ack.get("purpose", "navigation") == lease.purpose
@@ -82,7 +84,7 @@ class ControlLeaseManager:
 
     async def stop_remote(self, lease):
         try:
-            return await get_robot_gateway(lease.address).control_lease(lease.request("stop"))
+            return await get_robot_gateway(lease.address).control_lease({**lease.request("release"), "sequence": lease.sequence + 1})
         except Exception:
             return {"confirmed": False, "reason": "stop_response_unconfirmed"}
 
@@ -93,7 +95,7 @@ class ControlLeaseManager:
 
     async def acquire_for_run(self, binding, user_id, permission, run_id, *, additional_permissions=(), purpose="navigation", forward_limit_mps=None):
         robot_id, address = binding
-        if self.current or self.acquiring:
+        if self.current or self.acquiring or self.preparing_navigation:
             raise RuntimeError("已有控制租约，请先停止或接管")
         generation = self.generation
         expected = await get_robot_gateway(address).control_lease()

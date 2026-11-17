@@ -50,3 +50,14 @@ def test_stale_ack_does_not_dispatch():
     with pytest.raises(RuntimeError, match="陈旧"):
         asyncio.run(bridge.request(payload(gate)))
     assert not sent
+
+def test_explicit_controller_rejection_is_not_receipt_timeout():
+    bridge, gate, clock, _ = setup_bridge()
+    def reject(value):
+        gate.update(value, clock[0], stationary=False)
+        bridge.node.control_lease_ack = {**gate.snapshot(clock[0]), 'received_at':clock[0]}
+    bridge.node.publish_control_lease = reject
+    result = asyncio.run(bridge.request(payload(gate)))
+    assert result['confirmed'] is True
+    assert result['reason'] == 'controller_lease_rejected'
+    assert gate.owner is None and clock[0] == 0

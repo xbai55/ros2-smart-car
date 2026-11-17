@@ -25,7 +25,7 @@ def test_stop_during_acquisition_cannot_install_late_lease(monkeypatch):
         with pytest.raises(RuntimeError):
             await task
         assert manager.current is None
-        assert calls == ["acquire", "stop"]
+        assert calls == ["acquire", "release"]
     asyncio.run(scenario())
 
 

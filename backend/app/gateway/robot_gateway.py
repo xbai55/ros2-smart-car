@@ -143,7 +143,7 @@ class RobotGateway:
         return result
 
     async def navigation_request(self, path: str, payload: dict | None = None, *, query: dict | None = None) -> dict:
-        if path not in {"load-map", "runtime", "task", "task/action", "resolve-resources", "config", "start",
+        if path not in {"load-map", "runtime", "task", "task/action", "resolve-resources", "config", "start", "plan",
                         'handoff-load','handoff-seed','handoff-status','handoff-cancel','handoff-diagnostic'}:
             raise ValueError("不支持的导航接口")
         if not self.base_url:

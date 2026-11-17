@@ -79,7 +79,10 @@ def bridge(monkeypatch, make_fake_node):
     node.create_subscription = lambda *a: None
     node.create_timer = lambda *a: None
     node.get_clock = lambda: NS(now=lambda: NS(to_msg=lambda: None))
-    return mod.NavigationBridge(node)
+    bridge = mod.NavigationBridge(node)
+    async def apply(enabled, wait): bridge.dynamic_obstacles.applied = enabled
+    monkeypatch.setattr(bridge.dynamic_obstacles, 'apply', apply)
+    return bridge
 
 
 def preview(bridge, *, preview_epoch=None):
@@ -224,3 +227,11 @@ def test_revoked_navigation_can_leave_orphan_mode_but_not_new_owner(bridge):
     b._stop_owned_mode();assert b.node.mode_commands[-1]=='stop'
     b.node.mode_commands.clear();b.node.control_lease_ack.update(owner='new',control_epoch='new')
     b._stop_owned_mode();assert b.node.mode_commands==[]
+
+
+def test_changed_dynamic_setting_requires_new_preview(bridge):
+    plan=preview(bridge)
+    bridge.node.avoidance_service=NS(snapshot=lambda:{'settings':{'enabled':True}})
+    with pytest.raises(RuntimeError,match='重新预览'):
+        asyncio.run(bridge.start({'plan_id':plan['plan_id']}))
+    assert not bridge.navigator.requests

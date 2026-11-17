@@ -63,3 +63,13 @@ def test_automation_lease_never_accepts_manual_commands():
     claim = request(lease)
     assert lease.update(claim, 0, stationary=True)
     assert not lease.accepts_drive({**claim, "drive_seq": 1}, 1, "manual")
+
+def test_old_scoped_stop_and_release_cannot_revoke_new_owner():
+    lease = ControlLease()
+    old = request(lease)
+    assert lease.update(old, 0, stationary=True)
+    lease.revoke('operator_stop')
+    assert lease.update(request(lease, owner='new'), 1, stationary=True)
+    for op in ('stop','release','renew'):
+        assert not lease.update({**old, 'op':op, 'sequence':99}, 1.1)
+        assert lease.owner == 'new'

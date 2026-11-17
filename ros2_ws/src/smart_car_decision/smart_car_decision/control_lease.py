@@ -41,10 +41,18 @@ class ControlLease:
         return self.owner is None
 
     def update(self, value, now, stationary=False):
+        accepted = self._update(value, now, stationary)
+        if isinstance(value, dict) and isinstance(value.get("request_id"), str):
+            self.rejected_request_id = None if accepted else value["request_id"]
+        return accepted
+
+    def _update(self, value, now, stationary=False):
         self.blocked(now)
         if not math.isfinite(now) or not isinstance(value, dict):
             return False
         if value.get("op") == "stop" and value.get("controller_id") == self.controller_id:
+            if value.get("control_epoch") != self.epoch:
+                return False
             self.revoke("operator_stop")
             self.last_request_id = value.get("request_id")
             return True
@@ -115,6 +123,7 @@ class ControlLease:
         blocked = self.blocked(now)
         return {"controller_id": self.controller_id, "control_epoch": self.epoch,
                 "owner": self.owner, "purpose": self.purpose, "sequence": self.sequence, "blocked": blocked,
+                "rejected_request_id": getattr(self, "rejected_request_id", None),
                 "last_request_id": self.last_request_id, "motion_epoch": self.motion_epoch,
                 "drive_sequence": self.drive_sequence, "intent_sequence": self.intent_sequence,
                 "motion_intent_protocol": 2, "command_valid_until": now + self.COMMAND_TTL,
