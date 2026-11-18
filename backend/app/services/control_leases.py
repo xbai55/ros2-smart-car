@@ -93,7 +93,8 @@ class ControlLeaseManager:
         lease, self.current = self.current, None
         return await self.stop_remote(lease) if lease else {"confirmed": False, "reason": "no_host_lease"}
 
-    async def acquire_for_run(self, binding, user_id, permission, run_id, *, additional_permissions=(), purpose="navigation", forward_limit_mps=None):
+    async def acquire_for_run(self, binding, user_id, permission, run_id, *, additional_permissions=(), purpose="navigation", forward_limit_mps=None,
+                              parked=None):
         robot_id, address = binding
         if self.current or self.acquiring or self.preparing_navigation:
             raise RuntimeError("已有控制租约，请先停止或接管")
@@ -101,7 +102,9 @@ class ControlLeaseManager:
         expected = await get_robot_gateway(address).control_lease()
         if (generation != self.generation or expected.get("fresh") is not True
                 or expected.get("blocked") is not True
-                or not expected.get("controller_id") or not expected.get("control_epoch")):
+                or not expected.get("controller_id") or not expected.get("control_epoch")
+                or (parked is not None and (expected.get("mode") != "stop" or expected.get("stationary") is not True
+                    or any(expected.get(key) != parked.get(key) for key in ("controller_id", "control_epoch"))))):
             raise RuntimeError("车辆控制权不可用，请核对停车状态")
         if forward_limit_mps is not None and expected.get("bounded_forward_supported") is not True:
             raise RuntimeError("车端尚未支持受限前进协议")

@@ -3,6 +3,8 @@ import asyncio
 import hashlib
 import json
 import time
+
+import httpx
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -104,6 +106,39 @@ async def validate_steps(db, user, robot_id, steps, *, trial_plan=None, trial_ex
     return binding, resolved
 
 
+def active_executions(robot_id, *, excluding_plan=None):
+    query = select(AssistantExecution).where(
+        AssistantExecution.robot_id == robot_id,
+        AssistantExecution.state.notin_({"completed", "cancelled", "failed"}),
+    ).order_by(AssistantExecution.created_at, AssistantExecution.id)
+    return query if excluding_plan is None else query.where(AssistantExecution.plan_id != excluding_plan)
+
+
+def execution_conflict(row, *, unconfirmed=False):
+    reason = "车端结果尚未核实" if unconfirmed or row.state in {"cancel_requested", "unconfirmed"} else "任务仍未结束"
+    if row.message:
+        reason += f"：{row.message[:160]}"
+    return HTTPException(409, f"已有活动任务 {row.id}（{row.state}）：{reason}。请先核对或结束，不自动抢占")
+
+
+async def check_task_conflict(db, robot_id, *, excluding_plan=None):
+    from .assistant_worker import AssistantWorker
+    worker = AssistantWorker()
+    active = active_executions(robot_id, excluding_plan=excluding_plan)
+    for row in db.scalars(active).all():
+        if row.run_kind in {"patrol", "delivery"} and row.state != "dispatching":
+            try:
+                async with asyncio.timeout(4):
+                    await worker.reconcile_navigation(db, row)
+            except (TimeoutError, httpx.HTTPError, RuntimeError, ValueError):
+                db.refresh(row)
+                if row.state not in {"completed", "cancelled", "failed"}:
+                    raise execution_conflict(row, unconfirmed=True) from None
+    blocked = db.scalar(active)
+    if blocked is not None:
+        raise execution_conflict(blocked)
+
+
 async def confirm(db, plan, user, version, digest):
     plan_id, robot_id = plan.id, plan.robot_id
     if plan.version != version or plan.digest != digest or hashlib.sha256(plan.content.encode()).hexdigest() != digest:
@@ -120,15 +155,21 @@ async def confirm(db, plan, user, version, digest):
         await validate_steps(db, user, robot_id, steps, **({"trial_plan": plan_id} if trial else {}))
     except TimeoutError:
         raise HTTPException(409, "车端核验超时，请重试原计划") from None
+    # Check again after resource validation, including direct plan confirmation.
+    await check_task_conflict(db, robot_id, excluding_plan=plan_id)
     claim = db.execute(update(AssistantPlan).where(
         AssistantPlan.id == plan_id, AssistantPlan.state == "draft",
         AssistantPlan.version == version, AssistantPlan.digest == digest,
         AssistantPlan.expires_at > int(time.time()),
+        ~active_executions(robot_id, excluding_plan=plan_id).exists(),
     ).values(state="confirmed"))
     if claim.rowcount != 1:
         previous = db.scalar(select(AssistantExecution).where(AssistantExecution.plan_id == plan_id))
         if previous is not None:
             return execution_view(previous)
+        blocked = db.scalar(active_executions(robot_id))
+        if blocked is not None:
+            raise execution_conflict(blocked)
         raise HTTPException(409, "计划已过期或已变化")
     row = AssistantExecution(id=str(uuid4()), plan_id=plan_id, robot_id=robot_id, user_id=user.id)
     db.add(row)

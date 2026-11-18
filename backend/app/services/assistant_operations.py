@@ -163,9 +163,8 @@ async def run_tool(name, args, db, user, binding):
             raise ValueError('账号或车辆绑定已变化')
         if name == 'execute_plan':
             from .assistant_tools import propose
-            from .assistant_execution import confirm
-            if db.scalar(select(AssistantExecution.id).where(AssistantExecution.state.notin_({'completed', 'cancelled', 'failed'}))):
-                raise ValueError('已有活动任务，请先核对或结束，不自动抢占')
+            from .assistant_execution import check_task_conflict, confirm
+            await check_task_conflict(db, binding[0])
             draft = await propose(db, user, binding, args)
             content = json.dumps(draft, sort_keys=True, ensure_ascii=False, allow_nan=False)
             plan = AssistantPlan(id=str(uuid4()), session_id=turn.session_id, robot_id=binding[0], content=content,

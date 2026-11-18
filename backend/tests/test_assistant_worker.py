@@ -134,7 +134,7 @@ def test_stop_during_prepare_prevents_late_navigation_start(queue):
 
 
 def test_restart_reconciles_without_advancing(queue):
-    ident = queue.add("navigate")
+    ident = queue.add("navigate", "navigate")
     asyncio.run(queue.worker.tick())
     record = queue.load(ident)
     queue.worker.recover()

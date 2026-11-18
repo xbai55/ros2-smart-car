@@ -788,7 +788,16 @@ class DecisionController(Node):
             now = time.monotonic()
             stationary = self.stationary()
             request = json.loads(message.data)
+            park = request.get("op") == "stop" and request.get("navigation_park") is True
+            if park and (self.emergency_stop or self.mode not in {"stop", "manual", "auto"}):
+                self.control_lease.rejected_request_id = request.get("request_id")
+                return
             if self.control_lease.update(request, now, stationary) and request["op"] != "renew":
+                if park:
+                    mode = String()
+                    mode.data = "stop"
+                    self.on_mode(mode)
+                    self.operator_stop = True
                 self.lease_diagnostic_ids = wire_ids(request.get('diagnostic'))
                 self.drive_diagnostic_ids = {}
                 self.manual_command = "stop"
@@ -802,6 +811,7 @@ class DecisionController(Node):
     def publish_control_lease(self):
         message = String()
         value = self.control_lease.snapshot(time.monotonic())
+        value.update(mode=self.mode, emergency_stop=self.emergency_stop, stationary=self.stationary())
         value["linear_cruise_speed_mps"] = self.cruise_speed
         message.data = json.dumps(value, allow_nan=False)
         self.lease_status_pub.publish(message)

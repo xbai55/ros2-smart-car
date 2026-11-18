@@ -75,6 +75,8 @@ def observe(db, row, version, result, step_count):
         return _advance(db, row, version, step_count, result.get("message") if row.run_kind == "relative" else None)
     if phase in {"waiting_load", "waiting_handover", "found"}:
         state = "waiting_human"
+    elif row.run_kind in {"patrol", "delivery"} and phase in {"failed", "cancelled"}:
+        state = phase
     elif phase in {"failed", "cancelled", "fault", "paused"}:
         state = "paused"
     elif phase in {"planning", "running", "returning", "dwelling", "preparing", "searching", "stopping"}:
@@ -166,6 +168,16 @@ class AssistantWorker:
             if not permissions <= user.permissions:
                 raise HTTPException(403, "资源读取权限已变化")
 
+    def navigation_guard(self, ident, version, generation, step):
+        def check(*, parked_generation=None):
+            nonlocal generation
+            if parked_generation is not None:
+                if parked_generation != generation + 1:
+                    raise HTTPException(409, "控制代次已变化")
+                generation = parked_generation
+            self.guard(ident, version, generation, step)
+        return check
+
     async def _dispatch(self, db, row, user, step, count):
         ident, version = row.id, row.version
         generation = control_lease_manager.generation
@@ -183,8 +195,7 @@ class AssistantWorker:
             return
         version += 1
 
-        def guard():
-            self.guard(ident, version, generation, step)
+        guard = self.navigation_guard(ident, version, generation, step)
 
         guard()
         if kind == "relative":
@@ -227,8 +238,7 @@ class AssistantWorker:
             return
         version += 1
 
-        def guard():
-            self.guard(ident, version, generation, step)
+        guard = self.navigation_guard(ident, version, generation, step)
 
         guard()
         if row.run_kind == "search":
@@ -242,8 +252,9 @@ class AssistantWorker:
     async def tick(self):
         with self.sessions() as db:
             # The oldest unfinished plan holds its place while waiting for a human.
+            robot_id, _ = vehicle_binding(db)
             row = db.scalar(select(AssistantExecution).where(
-                AssistantExecution.state.notin_(TERMINAL)
+                AssistantExecution.robot_id == robot_id, AssistantExecution.state.notin_(TERMINAL)
             ).order_by(AssistantExecution.created_at, AssistantExecution.id).limit(1))
             if row is None:
                 return
@@ -282,7 +293,9 @@ class AssistantWorker:
                     if vehicle_binding(db) != (row.robot_id, row.vehicle_address):
                         raise HTTPException(409, "实车绑定已变化")
                     result = await lookup_run(db, row, user)
-                    if row.state == "running":
+                    if (row.state == "running" or result["state"] in {"failed", "cancelled"}
+                            or (result["state"] == "completed" and row.phase != "pickup"
+                                and row.step_index + 1 == len(steps))):
                         observe(db, row, initial_version, result, len(steps))
                     elif row.state == "unconfirmed" or row.vehicle_state != result["state"]:
                         transition(db, row, initial_version, "paused", vehicle_state=result["state"],
@@ -312,8 +325,52 @@ class AssistantWorker:
             finally:
                 diagnostic_context.reset(token)
 
+    async def reconcile_navigation(self, db, row, *, cancel=False):
+        """Use an exact vehicle receipt. A missing or mismatched record is not terminal."""
+        if (row.run_kind not in {"patrol", "delivery"} or not row.run_id or not row.task_id
+                or vehicle_binding(db) != (row.robot_id, row.vehicle_address)):
+            return False
+        version = row.version
+        run_id, task_id, kind = row.run_id, row.task_id, row.run_kind
+        binding = (row.robot_id, row.vehicle_address)
+        gateway = get_robot_gateway(binding[1])
+        if cancel:
+            result = await gateway.navigation_request("task/action", {
+                "action": "cancel", "run_id": run_id, "task_id": task_id, "kind": kind})
+        else:
+            result = await gateway.navigation_request("task", query={"run_id": run_id})
+        if (vehicle_binding(db) != binding or not isinstance(result, dict)
+                or (result.get("run_id"), result.get("task_id"), result.get("kind")) != (run_id, task_id, kind)
+                or result.get("state") not in TERMINAL):
+            return False
+        from .navigation_execution import execution, store_execution
+        from ..models import MissionTask, PatrolTask
+        task = db.get(MissionTask if kind == "delivery" else PatrolTask, task_id)
+        if task is not None and task.robot_id == row.robot_id and (execution(task) or {}).get("run_id") == run_id:
+            store_execution(db, task, {**result, "sync_state": "confirmed", "poll_required": False})
+        phase = result["state"]
+        if row.state == "cancel_requested":
+            state = "cancelled"
+        elif phase == "completed":
+            plan = db.get(AssistantPlan, row.plan_id)
+            if plan is None or row.phase == "pickup" or row.step_index + 1 != len(_plan_steps(plan)):
+                db.commit()
+                await control_lease_manager.release_run(run_id)
+                return False
+            state = phase
+        else:
+            state = phase
+        transition(db, row, version, state, vehicle_state=phase, pending_action=None,
+                   message=str(result.get("message") or ("计划已取消" if state == "cancelled" else ""))[:500])
+        await control_lease_manager.release_run(run_id)
+        return True
+
     async def _cancel_run(self, db, row):
         version = row.version
+        if row.run_kind in {"patrol", "delivery"}:
+            if row.run_id and vehicle_binding(db) == (row.robot_id, row.vehicle_address):
+                await self.reconcile_navigation(db, row, cancel=True)
+            return
         if row.run_id:
             gateway = get_robot_gateway(row.vehicle_address)
             if row.run_kind == "relative":
@@ -342,8 +399,7 @@ class AssistantWorker:
             elif row.run_kind == "search":
                 result = await gateway.search_request(row.run_id, operation="action", payload={"action": "cancel"})
             else:
-                result = await gateway.navigation_request("task/action", {
-                    "action": "cancel", "run_id": row.run_id, "task_id": row.task_id, "kind": row.run_kind})
+                return
             if result.get("run_id") != row.run_id or result.get("state") not in {"cancelled", "completed", "finished", "failed", "not_found"}:
                 return
             await control_lease_manager.release_run(row.run_id)

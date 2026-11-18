@@ -44,6 +44,10 @@ class LeaseBridge:
         ident = uuid4().hex
         wire = {key: payload[key] for key in ("op", "controller_id", "control_epoch", "owner", "sequence", "purpose", "forward_limit_mps")
                 if key in payload}
+        if payload["op"] == "stop":
+            wire.setdefault("control_epoch", before.get("control_epoch"))
+            if payload.get("navigation_park") is True:
+                wire["navigation_park"] = True
         wire["request_id"] = ident
         ids = request_ids.get()
         if ids:

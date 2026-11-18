@@ -224,7 +224,7 @@ class NavigationTaskRunner:
                         previous = self.snapshot_for(ident)
                         if previous.get('task_id') != payload.get('task_id') or previous.get('kind') != payload.get('kind'):
                             raise RuntimeError('取消请求与执行记录不匹配')
-                        if previous['state'] not in {'completed', 'cancelled'}:
+                        if previous['state'] not in TERMINAL:
                             previous.update(state='cancelled', message='旧请求已取消', version=previous.get('version',0)+1)
                             _write_record(path, previous)
                         return previous
@@ -238,6 +238,8 @@ class NavigationTaskRunner:
             if payload.get('task_id') not in (None, state.get('task_id')) or payload.get('kind') not in (None, state.get('kind')):
                 raise RuntimeError('取消或操作请求与执行记录不匹配')
             action = payload.get("action")
+            if "expected_version" in payload and payload["expected_version"] != state.get("version"):
+                raise RuntimeError("任务版本已变化，请刷新")
             if action == "cancel":
                 if state["state"] not in TERMINAL:
                     self._interrupt()

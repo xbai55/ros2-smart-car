@@ -1,6 +1,7 @@
 """Lease-backed startup for the existing Nav2 preview workflow."""
 import asyncio
 import time
+from contextlib import asynccontextmanager
 from uuid import UUID
 
 import httpx
@@ -80,9 +81,9 @@ async def start_direct_navigation(db, binding, user, payload):
         raise HTTPException(409, message) from exc
 
 
-async def prepare_navigation_preview(db, binding, user, payload, stop):
-    """Fence old work and confirm stop before binding the vehicle preview epoch."""
-    manager = control_lease_manager
+@asynccontextmanager
+async def navigation_parking(manager, stop, binding_is_current):
+    """Share the parking proof and host-generation fence across navigation entries."""
     if manager.preparing_navigation or manager.acquiring:
         raise HTTPException(409, "导航交接进行中，请等待后重新预览")
     manager.preparing_navigation = True
@@ -91,17 +92,26 @@ async def prepare_navigation_preview(db, binding, user, payload, stop):
         result = await stop()
         if (result.get("controller_confirmed") is not True
                 or result.get("stationary_confirmed") is not True or result.get("errors")):
-            raise HTTPException(409, "停车未确认，不能创建导航预览")
+            raise HTTPException(409, "停车未确认，不能继续导航")
         generation = manager.generation
-        if generation != expected_generation or vehicle_binding(db) != binding:
-            raise HTTPException(409, "停车期间控制权已变化，请重新预览")
-        preview = await get_robot_gateway(binding[1]).navigation_request("plan", payload)
-        if not isinstance(preview, dict) or not isinstance(preview.get("plan_id"), str):
-            raise HTTPException(502, "车端未返回有效的预览")
-        if vehicle_binding(db) != binding:
-            raise HTTPException(409, "车辆绑定已变化，请重新预览")
-        register_preview(binding, user.id, preview["plan_id"], generation)
-        return preview
+        if generation != expected_generation or not binding_is_current():
+            raise HTTPException(409, "停车期间控制权已变化，请重试")
+        yield generation, result
+    finally:
+        manager.preparing_navigation = False
+
+
+async def prepare_navigation_preview(db, binding, user, payload, stop):
+    """Fence old work and confirm stop before binding the vehicle preview epoch."""
+    try:
+        async with navigation_parking(control_lease_manager, stop, lambda: vehicle_binding(db) == binding) as (generation, _):
+            preview = await get_robot_gateway(binding[1]).navigation_request("plan", payload)
+            if not isinstance(preview, dict) or not isinstance(preview.get("plan_id"), str):
+                raise HTTPException(502, "车端未返回有效的预览")
+            if vehicle_binding(db) != binding:
+                raise HTTPException(409, "车辆绑定已变化，请重新预览")
+            register_preview(binding, user.id, preview["plan_id"], generation)
+            return preview
     except HTTPException as exc:
         emit("gateway.failed", "navigation_preparation_rejected", module="direct_navigation", level="ERROR",
              details={"operation": "prepare", "failures": [str(exc.detail)]})
@@ -113,5 +123,3 @@ async def prepare_navigation_preview(db, binding, user, payload, stop):
     except httpx.HTTPError as exc:
         emit("gateway.failed", "navigation_communication_failed", module="direct_navigation", level="ERROR", exception=exc)
         raise HTTPException(502, "导航预览通信异常，请检查连接") from exc
-    finally:
-        manager.preparing_navigation = False

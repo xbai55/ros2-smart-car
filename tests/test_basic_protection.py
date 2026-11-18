@@ -311,3 +311,24 @@ def test_task_modes_keep_their_required_input_gate_under_basic_profile(controlle
     c.control_loop()
     assert c.output[-1].linear.x == 0 and lease.owner is None
     assert c.avoidance.settings['protection_mode'] == 'basic'
+
+
+@pytest.mark.parametrize("fault", [None, "foreign_owner", "estop", "stale_epoch"])
+def test_navigation_park_is_fenced_and_changes_mode_with_stop_ack(controller, fault):
+    c = controller
+    identity = ready(c)
+    c.emergency_stop = fault == "estop"
+    expected = dict(identity)
+    if fault == "foreign_owner":
+        expected["owner"] = "foreign"
+    if fault == "stale_epoch":
+        expected["control_epoch"] = "old"
+    payload = {**expected, "op": "stop", "navigation_park": True, "request_id": "park"}
+    c.on_control_lease(NS(data=json.dumps(payload)))
+    if fault:
+        assert c.mode == "manual" and c.control_lease.owner == "host"
+        assert c.control_lease.rejected_request_id == "park"
+    else:
+        assert c.mode == "stop" and c.operator_stop and c.stationary()
+        assert c.control_lease.owner is None and c.control_lease.epoch != identity["control_epoch"]
+        assert c.control_lease.last_request_id == "park"

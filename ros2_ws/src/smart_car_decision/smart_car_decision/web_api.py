@@ -1015,6 +1015,32 @@ def create_app(
         except (ValueError, TypeError, KeyError, RuntimeError) as exc:
             raise navigation_error(exc) from exc
 
+    @app.post("/api/navigation/task/park")
+    async def park_for_navigation_task(payload: dict = Body(...)):
+        from .stop_service import stop_vehicle
+        runner = navigation_component("navigation_tasks")
+        async with runner.operation_lock:
+            task = runner.snapshot()
+            if (task.get("state") not in {"prepared", "waiting_load", "paused", "waiting_handover"}
+                    or any(task.get(key) != payload.get(key)
+                           for key in ("run_id", "task_id", "kind", "version", "state"))):
+                raise HTTPException(409, "待启动导航任务已变化")
+            live = lease_bridge.snapshot()
+            identity = {key: live.get(key) for key in ("controller_id", "control_epoch", "owner")}
+            if (not live.get("fresh") or None in (identity["controller_id"], identity["control_epoch"])
+                    or any(payload.get(key) != value for key, value in identity.items())
+                    or live.get("mode") not in {"stop", "auto", "manual"}
+                    or live.get("emergency_stop") is not False):
+                raise HTTPException(409, "控制权已变化或车辆当前状态禁止导航")
+            result = await stop_vehicle(node, navigation_lease=identity)
+            parked = lease_bridge.snapshot()
+            if (not result["stationary_confirmed"] or not parked.get("fresh") or not parked.get("blocked")
+                    or parked.get("mode") != "stop" or parked.get("stationary") is not True
+                    or any(parked.get(key) != result["lease"].get(key) for key in ("controller_id", "control_epoch"))
+                    or runner.snapshot().get("version") != task.get("version")):
+                raise HTTPException(409, "停车、静止或任务状态未确认")
+            return result
+
     @app.post("/api/navigation/task/action")
     async def action_navigation_task(payload: dict = Body(...)):
         try:

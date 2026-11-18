@@ -53,6 +53,8 @@ class ControlLease:
         if value.get("op") == "stop" and value.get("controller_id") == self.controller_id:
             if value.get("control_epoch") != self.epoch:
                 return False
+            if value.get("navigation_park") is True and value.get("owner") != self.owner:
+                return False
             self.revoke("operator_stop")
             self.last_request_id = value.get("request_id")
             return True

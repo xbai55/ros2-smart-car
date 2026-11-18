@@ -11,7 +11,8 @@ def execution_client(client, login, monkeypatch):
     monkeypatch.setattr("app.api.routes.navigation_tasks.control_lease_manager", manager)
     async def lease_request(self, payload=None):
         if payload is None:
-            return {"controller_id": "test-controller", "control_epoch": "test-epoch", "fresh": True, "blocked": True}
+            return {"controller_id": "test-controller", "control_epoch": "test-epoch", "fresh": True, "blocked": True,
+                    "mode": "stop", "emergency_stop": False, "stationary": True}
         return {"confirmed": True, "lease": {**payload, "fresh": True, "blocked": payload["op"] != "acquire"}}
     monkeypatch.setattr("app.gateway.robot_gateway.RobotGateway.control_lease", lease_request)
     monkeypatch.setattr("app.api.routes.navigation_tasks.vehicle_binding", lambda db: ("fixture-robot-1", ""))
@@ -27,6 +28,8 @@ def execution_client(client, login, monkeypatch):
                 req=httpx.Request('GET','http://fixture/api/navigation/task')
                 raise httpx.HTTPStatusError('missing',request=req,response=httpx.Response(404,request=req,json={'detail':{'code':'NAVIGATION_RUN_NOT_FOUND'}}))
             return runs[query["run_id"]]
+        if path == "task/park":
+            return {"controller_confirmed": True, "stationary_confirmed": True, "lease": await lease_request(self)}
         if path == "task/action":
             value = runs[payload["run_id"]]
             if payload["action"] == "loaded":

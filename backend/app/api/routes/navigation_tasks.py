@@ -18,6 +18,7 @@ from ...services.robot_context import vehicle_binding
 from ...services.navigation_execution import execution, store_execution
 from ...services.task_sync import refresh_execution, STATES
 from ...services.control_leases import control_lease_manager
+from ...services.direct_navigation import navigation_parking
 from ...services.diagnostics import emit as diagnostic_emit
 
 router = APIRouter(prefix="/navigation-tasks", tags=["navigation-tasks"])
@@ -174,6 +175,60 @@ async def get_execution(kind: str, task_id: str, db: Session = Depends(get_db),
 
 
 
+async def _prepare_task_start(db, item, previous, user, guard):
+    manager = control_lease_manager
+    binding = vehicle_binding(db)
+    gateway = get_robot_gateway(binding[1])
+    generation = manager.generation
+
+    def check():
+        if guard:
+            guard()
+        db.refresh(item)
+        live = execution(item)
+        if (vehicle_binding(db) != binding or not live or live.get("sync_state") == "cancel_pending"
+                or any(live.get(key) != previous.get(key) for key in ("run_id", "state", "version"))):
+            raise _error(409, "待启动任务或车辆绑定已变化")
+
+    async def park():
+        lease_state = await gateway.control_lease()
+        check()
+        if (manager.generation != generation or not lease_state.get("fresh")
+                or lease_state.get("emergency_stop") is not False
+                or lease_state.get("mode") not in {"stop", "auto", "manual"}):
+            raise _error(409, "控制状态未确认、车端需要更新或当前禁止导航")
+        held = manager.current
+        if held is not None and (held.user_id != user.id or (held.robot_id, held.address) != binding
+                                or held.purpose not in {"manual", "auto"}):
+            raise _error(409, "控制权已被其他操作占用")
+        if lease_state.get("owner") is not None and (held is None or
+                any(lease_state.get(key) != value for key, value in held.identity().items())):
+            raise _error(409, "控制权已被其他操作占用")
+        await manager.stop()
+        if manager.generation != generation + 1:
+            raise _error(409, "控制代次已变化")
+        if held is not None:
+            lease_state = await gateway.control_lease()
+            if (not lease_state.get("fresh") or lease_state.get("owner") is not None
+                    or lease_state.get("controller_id") != held.controller_id):
+                raise _error(409, "旧租约尚未确认释放")
+        if manager.generation != generation + 1 or vehicle_binding(db) != binding:
+            raise _error(409, "车辆绑定或控制代次已变化")
+        return await gateway.navigation_request("task/park", {
+            **{key: lease_state.get(key) for key in ("controller_id", "control_epoch", "owner")},
+            **{key: previous.get(key) for key in ("run_id", "task_id", "kind", "version", "state")},
+        })
+
+    async with navigation_parking(manager, park, lambda: vehicle_binding(db) == binding) as (parked_generation, result):
+        if guard:
+            guard(parked_generation=parked_generation)
+        check()
+        parked = result.get("lease")
+        if not isinstance(parked, dict) or not all(parked.get(key) for key in ("controller_id", "control_epoch")):
+            raise _error(409, "停车回执缺少控制器代次")
+        return binding, parked, check
+
+
 async def apply_execution_action(kind, task_id, payload, db, user, *, guard=None):
     _permission(user, kind)
     item = _task(db, kind, task_id)
@@ -207,16 +262,20 @@ async def apply_execution_action(kind, task_id, payload, db, user, *, guard=None
         if action in motion_phases or (action == "handover" and previous.get("return_to_start") is True):
             permission = "missions.manage" if kind == "delivery" else "patrol.manage"
             try:
-                lease = await control_lease_manager.acquire_for_run(vehicle_binding(db), user.id, permission, wire["run_id"])
+                binding, parked, check = await _prepare_task_start(db, item, previous, user, guard)
+                lease = await control_lease_manager.acquire_for_run(
+                    binding, user.id, permission, wire["run_id"], parked=parked)
+                wire["expected_version"] = previous.get("version")
             except (httpx.HTTPError, RuntimeError, ValueError) as exc:
                 raise _error(409, "未取得实车控制租约，请核对停车与连接状态") from exc
             wire["control_lease"] = lease.identity()
         try:
             if guard:
                 guard()
-            if lease is not None and (control_lease_manager.current is not lease
-                                      or vehicle_binding(db) != (lease.robot_id, lease.address)):
-                raise _error(409, "控制租约或实车绑定已变化")
+            if lease is not None:
+                check()
+                if control_lease_manager.current is not lease:
+                    raise _error(409, "控制租约已变化")
             gateway = get_robot_gateway(lease.address) if lease is not None else None
             result = await _call(db, "task/action", wire, gateway=gateway)
             if result.get("task_id") != task_id or result.get("run_id") != wire["run_id"]:

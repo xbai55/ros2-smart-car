@@ -22,27 +22,28 @@ def stationary_evidence(sample, after, now):
             and abs(linear) < .01 and abs(angular) < .02)
 
 
-async def stop_vehicle(node):
+async def stop_vehicle(node, *, navigation_lease=None):
     sink = getattr(node, 'diagnostic_log', None)
     ids = {**request_ids.get(), 'episode_id': uuid4().hex} if sink else {}
     if sink:
         sink.emit('stop.requested', 'independent_stop', ids=ids)
     errors = []
     sent = False
-    for name, argument in (("set_command", "stop"), ("set_mode", "stop")):
+    commands = (("set_command", "stop"), ("set_mode", "stop")) if navigation_lease is None else ()
+    for name, argument in commands:
         try:
             getattr(node, name)(argument)
             sent = True
         except Exception:
             errors.append(name + "_failed")
     runner = getattr(node, "navigation_tasks", None)
-    if runner is not None:
+    if navigation_lease is None and runner is not None:
         try:
             runner.interrupt("人工停止：取消后续导航")
         except Exception:
             errors.append("task_cancel_failed")
     bridge = getattr(node, "navigation", None)
-    if bridge is not None:
+    if navigation_lease is None and bridge is not None:
         try:
             bridge.cancel()
         except Exception:
@@ -53,18 +54,22 @@ async def stop_vehicle(node):
     try:
         token = request_ids.set(ids) if sink else None
         try:
-            result = await lease.request({"op": "stop", "controller_id": lease.snapshot().get("controller_id")})
+            request = {"op": "stop", "controller_id": lease.snapshot().get("controller_id")}
+            if navigation_lease is not None:
+                request.update(navigation_lease, navigation_park=True)
+            result = await lease.request(request)
         finally:
             if token is not None:
                 request_ids.reset(token)
         stopped_lease = result.get("lease", {})
-        confirmed = result.get("confirmed") is True and stopped_lease.get("blocked") is True
+        confirmed = (result.get("confirmed") is True and result.get("reason") != "controller_lease_rejected"
+                     and stopped_lease.get("blocked") is True)
         if confirmed:
             confirmed_at = time.monotonic()
     except Exception:
         errors.append("controller_stop_unconfirmed")
     vision = getattr(node, "vision_service", None)
-    if vision is not None:
+    if navigation_lease is None and vision is not None:
         try:
             search = vision.search_snapshot()
             if search.get("run_id") and search.get("state") not in {"idle", "cancelled", "not_found", "finished"}:
@@ -85,6 +90,8 @@ async def stop_vehicle(node):
             await asyncio.sleep(.05)
     output = {"request_sent": sent or confirmed, "controller_confirmed": confirmed,
               "stationary_confirmed": stationary, "errors": errors}
+    if navigation_lease is not None:
+        output["lease"] = stopped_lease if confirmed else {}
     if sink:
         sink.emit('stop.result', 'stationary_confirmed' if stationary else 'stationary_unconfirmed',
                   ids=ids, level='INFO' if stationary else 'WARN', details={**output, 'failures': errors})
